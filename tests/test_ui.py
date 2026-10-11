@@ -76,3 +76,37 @@ def test_catalog_to_dataframe_and_roundtrip():
     reconstructed = dataframe_to_catalog(df)
     assert reconstructed["TC"]["charm_part_no"] == "KL3006X1-MOD"
     assert reconstructed["TC"]["terminal_block_type"] == "CJC"
+
+
+def test_generate_sample_rev_a_and_b_bytes():
+    from src.ui.app import generate_sample_rev_a_bytes, generate_sample_rev_b_bytes
+
+    a_bytes = generate_sample_rev_a_bytes()
+    b_bytes = generate_sample_rev_b_bytes()
+
+    assert isinstance(a_bytes, bytes)
+    assert isinstance(b_bytes, bytes)
+
+    df_a = pd.read_excel(io.BytesIO(a_bytes))
+    df_b = pd.read_excel(io.BytesIO(b_bytes))
+
+    assert len(df_a) > 0
+    assert len(df_b) > 0
+    assert "Tag" in df_a.columns
+    assert "Tag" in df_b.columns
+
+
+def test_highlight_diff_dataframe():
+    from src.ui.app import highlight_diff_dataframe
+
+    test_data = [
+        {"Status": "🟢 ADDED", "Tag": "10-LT-101", "Displacement": "NEW ALLOCATION", "Penalty Δ": 0},
+        {"Status": "🔴 DELETED", "Tag": "10-PT-102", "Displacement": "DELETED (Vacated)", "Penalty Δ": 0},
+        {"Status": "🟠 MODIFIED", "Tag": "10-FT-103", "Displacement": "RELOCATED", "Penalty Δ": 1000},
+        {"Status": "⚪ UNCHANGED", "Tag": "10-TT-104", "Displacement": "STATIONARY (Frozen)", "Penalty Δ": 0},
+    ]
+    df = pd.DataFrame(test_data)
+    styler = highlight_diff_dataframe(df)
+    assert hasattr(styler, "to_html") or hasattr(styler, "style")
+
+

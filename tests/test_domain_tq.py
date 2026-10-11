@@ -28,7 +28,7 @@ def test_technical_query_creation_and_attributes():
 def test_technical_query_validation():
     with pytest.raises(ValidationError):
         # Missing required fields like category, severity, description
-        TechnicalQuery(tq_id="TQ-INST-002")
+        TechnicalQuery(tq_id="TQ-INST-002")  # type: ignore[call-arg]
 
 
 def test_severity_values():

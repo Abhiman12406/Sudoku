@@ -2,7 +2,7 @@
 
 import io
 from pathlib import Path
-from typing import BinaryIO, Dict, List, Optional, Sequence, Union
+from typing import Any, BinaryIO, Dict, List, Optional, Sequence, Union
 import openpyxl
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
@@ -339,8 +339,10 @@ def export_allocation_to_excel(
     bps_per_cioc: int = 8,
     ciocs_per_cabinet: int = 4,
     segregation_policy: Union[str, SegregationPolicy] = SegregationPolicy.CIOC,
+    revision_result: Optional[Any] = None,
+    rev_a_allocations: Optional[Sequence[AllocatedSignal]] = None,
 ) -> bytes:
-    """Export allocated signals to a complete 5-tab deliverable Excel workbook (.xlsx).
+    """Export allocated signals to a complete deliverable Excel workbook (.xlsx).
 
     Tabs generated:
       1. Customer Template Sheet (injected) or Template_Overlay
@@ -348,6 +350,7 @@ def export_allocation_to_excel(
       3. TQ_Log (Formal technical queries log)
       4. Cabinet_Summary (Channel counts, wired spares, free spares, utilization %)
       5. Rule_Compliance (Independent audit checklist with pass/fail counts)
+      6. Revision_Impact (Optional customer revision comparison matrix)
 
     Args:
         allocations: Sequence of AllocatedSignal objects.
@@ -358,9 +361,11 @@ def export_allocation_to_excel(
         bps_per_cioc: Baseplates per CIOC (8).
         ciocs_per_cabinet: CIOCs per cabinet (4).
         segregation_policy: "CIOC" or "CABINET" segregation verification policy.
+        revision_result: Optional RevisionAllocationResult from revision diff engine.
+        rev_a_allocations: Optional baseline Rev A allocated signals.
 
     Returns:
-        Raw bytes of the generated 5-tab Excel workbook.
+        Raw bytes of the generated Excel workbook.
     """
     if template_path_or_buffer is not None:
         wb = overlay_allocation_on_template(template_path_or_buffer, allocations)
@@ -428,6 +433,16 @@ def export_allocation_to_excel(
         # Tab 5: Template_Overlay
         ws_overlay = wb.create_sheet(title="Template_Overlay")
         _populate_allocation_sheet(ws_overlay, allocations)
+
+    # Tab: Revision_Impact (appended when revision_result is supplied)
+    if revision_result is not None:
+        from src.revision.excel_tab import populate_revision_impact_sheet
+
+        if "Revision_Impact" not in wb.sheetnames:
+            ws_rev = wb.create_sheet(title="Revision_Impact")
+        else:
+            ws_rev = wb["Revision_Impact"]
+        populate_revision_impact_sheet(ws_rev, revision_result, rev_a_allocations or [])
 
     # Save workbook to buffer
     buf = io.BytesIO()

@@ -1,13 +1,14 @@
 """Streamlit Web Application for IO Signal Sudoku with Automated TQ Engine."""
 
 import io
-from typing import List
+from typing import Any, List
 import pandas as pd
 import streamlit as st
 
 from src.domain.hardware import DEFAULT_CATALOG, load_hardware_catalog
-from src.domain.models import TechnicalQuery
-from src.pipeline import run_hierarchical_pipeline, run_walking_pipeline
+from src.domain.models import AllocatedSignal, TechnicalQuery
+from src.pipeline import run_hierarchical_pipeline, run_revision_pipeline, run_walking_pipeline
+from src.revision.classifier import DiffStatus
 from src.ui.components.cabinet_visualizer import render_streamlit_rack
 
 
@@ -208,6 +209,101 @@ def generate_sample_blank_customer_template_bytes() -> bytes:
     return buf.getvalue()
 
 
+def generate_sample_rev_a_bytes() -> bytes:
+    """Generate a clean Rev A baseline schedule."""
+    data = {
+        "Tag": [
+            "10-FT-101",
+            "10-FV-101",
+            "10-PT-102",
+            "10-PV-102",
+            "10-TT-103",
+            "10-LT-104",
+            "10-PSH-105",
+            "10-PSL-105",
+            "10-XV-106",
+            "10-SOV-107",
+            "20-FT-201",
+            "20-FV-201",
+        ],
+        "IO Type": ["AI", "AO", "AI", "AO", "RTD", "AI", "DI", "DI", "DO", "DO", "AI", "AO"],
+        "Cable ID": [
+            "CBL-TRUNK-01", "CBL-TRUNK-01", "CBL-TRUNK-01", "CBL-TRUNK-01",
+            "CBL-TRUNK-01", "CBL-TRUNK-01", "CBL-TRUNK-01", "CBL-TRUNK-01",
+            "CBL-TRUNK-01", "CBL-TRUNK-01", "CBL-TRUNK-02", "CBL-TRUNK-02",
+        ],
+        "Pair No": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 1, 2],
+        "Segregation": ["A", "A", "A", "A", "A", "A", "A", "A", "A", "A", "B", "B"],
+        "Description": [
+            "Inlet Flow Transmitter",
+            "Inlet Control Valve",
+            "Separator Pressure Transmitter",
+            "Separator Pressure Control Valve",
+            "Reboiler Temperature Element",
+            "Flash Drum Level Transmitter",
+            "Feed Line High Pressure Switch",
+            "Feed Line Low Pressure Switch",
+            "Emergency Shutdown Valve",
+            "Blowdown Solenoid Valve",
+            "Train B Return Flow",
+            "Train B Return Control Valve",
+        ],
+    }
+    df = pd.DataFrame(data)
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name="Rev_A_Schedule")
+    return buf.getvalue()
+
+
+def generate_sample_rev_b_bytes() -> bytes:
+    """Generate a modified Rev B schedule with added, deleted, modified, and unchanged loops."""
+    data = {
+        "Tag": [
+            "10-FT-101",
+            "10-FV-101",
+            "10-PT-102",  # modified (RTD)
+            "10-PV-102",
+            # 10-TT-103 deleted!
+            "10-LT-104",
+            "10-PSH-105",
+            "10-PSL-105",
+            "10-XV-106",
+            "10-SOV-107",
+            "10-ZT-108",  # added
+            "20-FT-201",
+            "20-FV-201",
+        ],
+        "IO Type": ["AI", "AO", "RTD", "AO", "AI", "DI", "DI", "DO", "DO", "AI", "AI", "AO"],
+        "Cable ID": [
+            "CBL-TRUNK-01", "CBL-TRUNK-01", "CBL-TRUNK-01", "CBL-TRUNK-01",
+            "CBL-TRUNK-01", "CBL-TRUNK-01", "CBL-TRUNK-01", "CBL-TRUNK-01",
+            "CBL-TRUNK-01", "CBL-TRUNK-01", "CBL-TRUNK-02", "CBL-TRUNK-02",
+        ],
+        "Pair No": [1, 2, 3, 4, 6, 7, 8, 9, 10, 5, 1, 2],
+        "Segregation": ["A", "A", "A", "A", "A", "A", "A", "A", "A", "A", "B", "B"],
+        "Description": [
+            "Inlet Flow Transmitter",
+            "Inlet Control Valve",
+            "Separator Pressure RTD Element (Modified)",
+            "Separator Pressure Control Valve",
+            "Flash Drum Level Transmitter",
+            "Feed Line High Pressure Switch",
+            "Feed Line Low Pressure Switch",
+            "Emergency Shutdown Valve",
+            "Blowdown Solenoid Valve",
+            "Compressor Shaft Position (Added Loop)",
+            "Train B Return Flow",
+            "Train B Return Control Valve",
+        ],
+    }
+    df = pd.DataFrame(data)
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name="Rev_B_Schedule")
+    return buf.getvalue()
+
+
 def format_severity_badge(severity: str) -> str:
     """Return formatted emoji badge for a given severity rating."""
     sev = str(severity).strip().capitalize()
@@ -218,6 +314,32 @@ def format_severity_badge(severity: str) -> str:
     elif sev == "Info":
         return "🔵 Info"
     return sev
+
+
+def highlight_diff_dataframe(df_delta: pd.DataFrame) -> Any:
+    """Apply industrial color-coded styling to revision delta dataframe:
+    - Added: Green (#E2EFDA)
+    - Deleted: Red (#FCE4D6)
+    - Modified / Relocated: Orange (#FFF2CC)
+    - Unchanged: Neutral (#FFFFFF)
+    """
+    def _row_styler(row):
+        status_str = str(row.get("Status", ""))
+        if "ADDED" in status_str:
+            return ["background-color: #E2EFDA; color: #276A3C; font-weight: bold;"] * len(row)
+        elif "DELETED" in status_str:
+            return ["background-color: #FCE4D6; color: #C00000; font-weight: bold;"] * len(row)
+        elif "MODIFIED" in status_str:
+            if row.get("Penalty Δ", 0) > 0 or "RELOCATED" in str(row.get("Displacement", "")):
+                return ["background-color: #FFF2CC; color: #B25900; font-weight: bold;"] * len(row)
+            return ["background-color: #FFFDF0; color: #595959;"] * len(row)
+        return ["background-color: #FFFFFF; color: #333333;"] * len(row)
+
+    try:
+        return df_delta.style.apply(_row_styler, axis=1)
+    except Exception:
+        return df_delta
+
 
 
 def catalog_to_dataframe(catalog: dict) -> pd.DataFrame:
@@ -248,24 +370,14 @@ def dataframe_to_catalog(df: pd.DataFrame) -> dict:
     return custom_catalog
 
 
-def main():
-    st.set_page_config(
-        page_title="IO Signal Sudoku | Automated TQ Engine",
-        page_icon="⚡",
-        layout="wide",
-    )
-
-    st.title("⚡ IO Signal Sudoku")
-    st.subheader("DeltaV Electronic Marshalling: Automated CP-SAT Allocation & TQ Engine")
-
-    st.markdown(
-        """
-        **Automated Technical Query (TQ) Engine:** Automatically validates incoming customer spreadsheets, 
-        flags duplicate tags, unknown IO types, and cable pair overflows into formal `TQ-INST-xxx` records, 
-        and safely processes valid signals without crashing.
-        """
-    )
-
+def _render_single_allocation_tab(
+    solver_mode: str,
+    charms_per_bp: int,
+    baseplates_per_cioc: int,
+    segregation_policy: str,
+    custom_catalog: dict,
+) -> None:
+    """Render single-revision automated allocation workflow."""
     col_upload, col_sample = st.columns([3, 1])
 
     with col_sample:
@@ -302,46 +414,14 @@ def main():
             "Upload Signal Database (.xlsx or .csv)",
             type=["xlsx", "xls", "csv"],
             help="Excel workbook containing Tag, IO Type, Cable ID, Pair No, and Description.",
+            key="single_signal_uploader",
         )
         uploaded_template = st.file_uploader(
             "Upload Blank Customer Template (.xlsx) [Optional]",
             type=["xlsx"],
             help="Preserves customer fonts, cell styles, borders, and formulas while overlaying allocated loop coordinates and appending engineering deliverable tabs.",
+            key="single_template_uploader",
         )
-
-    with st.sidebar:
-        st.header("⚙️ Configuration")
-        solver_mode = st.radio(
-            "Solver Algorithm",
-            options=["Two-Stage Hierarchical (Trunk Cables & Spares)", "Walking Skeleton (Flat)"],
-            index=0,
-            help="Hierarchical mode groups signals into rigid multi-conductor cable blocks (2, 6, 12, 24 pairs), preserves ascending pair contiguity, and creates WIRED SPARE records.",
-        )
-        charms_per_bp = st.slider("CHARMs per Baseplate", min_value=6, max_value=24, value=12, step=2)
-        baseplates_per_cioc = st.slider("Baseplates per CIOC", min_value=4, max_value=12, value=8, step=1)
-        st.caption("Standard Emerson DeltaV DIN-rail baseplates host 12 CHARMs; CIOC carriers host up to 8 baseplates.")
-
-        st.subheader("🛡️ Safety Redundancy Rules")
-        segregation_policy = st.radio(
-            "A/B Segregation Policy",
-            options=["CIOC-level", "Cabinet-level"],
-            index=0,
-            help="CIOC-level enforces that Train A and Train B signals never reside on the same CIOC card.\nCabinet-level enforces that Train A and Train B signals never reside in the same Marshalling Cabinet.",
-        )
-
-        st.subheader("🛠️ Hardware Catalog Editor")
-        with st.expander("Customize CHARMs & Terminal Blocks", expanded=False):
-            st.caption("Edit CHARM models and terminal block mappings for each signal type:")
-            default_cat = load_hardware_catalog()
-            df_cat_init = catalog_to_dataframe(default_cat)
-            edited_cat_df = st.data_editor(
-                df_cat_init,
-                num_rows="fixed",
-                use_container_width=True,
-                key="hardware_catalog_editor",
-            )
-
-        custom_catalog = dataframe_to_catalog(edited_cat_df)
 
     if uploaded_file is not None:
         try:
@@ -354,7 +434,7 @@ def main():
             st.write("### 1. Ingested Signals Preview")
             st.dataframe(df_preview, use_container_width=True)
 
-            if st.button("🚀 Run Pre-Solve Validation & Allocation", type="primary"):
+            if st.button("🚀 Run Pre-Solve Validation & Allocation", type="primary", key="btn_single_solve"):
                 with st.spinner("Validating data & solving CP-SAT allocation..."):
                     temp_input = uploaded_template.getvalue() if uploaded_template is not None else None
                     if solver_mode.startswith("Two-Stage"):
@@ -373,9 +453,14 @@ def main():
                             catalog=custom_catalog,
                             template_file_or_bytes=temp_input,
                         )
-                    allocations = result.allocations
-                    out_excel_bytes = result.excel_bytes
-                    tqs: List[TechnicalQuery] = result.tqs
+                    if isinstance(result, tuple):
+                        allocations = result[0]
+                        out_excel_bytes = result[1]
+                        tqs = result[2]
+                    else:
+                        allocations = result.allocations
+                        out_excel_bytes = result.excel_bytes
+                        tqs = result.tqs
 
                 # --- 2. Technical Query Review Table ---
                 st.write("### 2. Pre-Solve Validation & Technical Query (TQ) Log")
@@ -397,11 +482,11 @@ def main():
                     tq_c3.metric("Warnings", warn_count)
                     tq_c4.metric("Informational", info_count)
 
-                    # Interactive Filter
                     severity_filter = st.radio(
                         "Filter by Severity",
                         options=["All", "Critical", "Warning", "Info"],
                         horizontal=True,
+                        key="single_severity_filter",
                     )
 
                     filtered_tqs = [
@@ -518,11 +603,321 @@ def main():
                     file_name="deltav_5tab_engineering_deliverable.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     help="Delivers zero-rework multi-tab Excel workbook preserving customer styles, fonts, and formulas.",
+                    key="btn_download_single_deliv",
                 )
 
         except Exception as e:
             st.error(f"Error processing signal file: {e}")
 
+
+def _render_revision_diff_tab(
+    charms_per_bp: int,
+    baseplates_per_cioc: int,
+    segregation_policy: str,
+    custom_catalog: dict,
+) -> None:
+    """Render dual-uploader Revision Diff & Perturbation Minimization workflow."""
+    st.write("### 🔄 Automated Customer Revision Handling (Rev A vs Rev B)")
+    st.markdown(
+        """
+        Upload baseline **Rev A** and new revision **Rev B** simultaneously. The engine identifies changes 
+        (`UNCHANGED`, `MODIFIED`, `DELETED`, `ADDED`), freezes unchanged signals in their Rev A physical slots 
+        ($\\Delta = 0$), backfills vacated slots before opening new hardware, and minimizes weighted relocation:
+        $$\\min (10000 \\cdot \\Delta_{\\text{cabinet}} + 1000 \\cdot \\Delta_{\\text{CIOC}} + 100 \\cdot \\Delta_{\\text{baseplate}} + 10 \\cdot \\Delta_{\\text{slot}})$$
+        """
+    )
+
+    col_rev_upload, col_rev_sample = st.columns([3, 1])
+
+    with col_rev_sample:
+        st.write("##### Sample Revision Files")
+        rev_a_sample = generate_sample_rev_a_bytes()
+        st.download_button(
+            label="📥 Download Baseline Rev A (.xlsx)",
+            data=rev_a_sample,
+            file_name="sample_baseline_rev_a.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            help="Baseline Rev A schedule with 12 instrument loops.",
+            key="btn_download_rev_a_sample",
+        )
+
+        rev_b_sample = generate_sample_rev_b_bytes()
+        st.download_button(
+            label="📥 Download New Rev B (.xlsx)",
+            data=rev_b_sample,
+            file_name="sample_new_rev_b.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            help="New Rev B schedule with added, deleted, and modified loops.",
+            key="btn_download_rev_b_sample",
+        )
+
+    with col_rev_upload:
+        st.write("##### Dual-Revision Ingestion")
+        c_up_a, c_up_b = st.columns(2)
+        with c_up_a:
+            uploaded_rev_a = st.file_uploader(
+                "1. Baseline Rev A (.xlsx or .csv)",
+                type=["xlsx", "xls", "csv"],
+                key="uploader_rev_a",
+                help="Baseline Rev A schedule or previously exported deliverable workbook.",
+            )
+        with c_up_b:
+            uploaded_rev_b = st.file_uploader(
+                "2. New Revision Rev B (.xlsx or .csv)",
+                type=["xlsx", "xls", "csv"],
+                key="uploader_rev_b",
+                help="New customer Rev B revision spreadsheet.",
+            )
+
+        uploaded_rev_template = st.file_uploader(
+            "Upload Customer Blank Template (.xlsx) [Optional]",
+            type=["xlsx"],
+            key="uploader_rev_template",
+            help="Preserves customer template formatting while overlaying Rev B coordinates and appending Revision_Impact tab.",
+        )
+
+    if uploaded_rev_a is not None and uploaded_rev_b is not None:
+        try:
+            bytes_a = uploaded_rev_a.getvalue()
+            bytes_b = uploaded_rev_b.getvalue()
+
+            df_a_preview = (
+                pd.read_csv(io.BytesIO(bytes_a))
+                if uploaded_rev_a.name.endswith(".csv")
+                else pd.read_excel(io.BytesIO(bytes_a))
+            )
+            df_b_preview = (
+                pd.read_csv(io.BytesIO(bytes_b))
+                if uploaded_rev_b.name.endswith(".csv")
+                else pd.read_excel(io.BytesIO(bytes_b))
+            )
+
+            st.write("##### Revision Previews")
+            prev_c1, prev_c2 = st.columns(2)
+            with prev_c1:
+                st.caption(f"**Baseline Rev A ({len(df_a_preview)} signals)**")
+                st.dataframe(df_a_preview, use_container_width=True, height=200)
+            with prev_c2:
+                st.caption(f"**New Revision Rev B ({len(df_b_preview)} signals)**")
+                st.dataframe(df_b_preview, use_container_width=True, height=200)
+
+            if st.button("⚡ Run Revision Diff & Perturbation Minimization", type="primary", key="btn_run_rev"):
+                with st.spinner("Classifying diff, freezing unchanged coordinates, and solving perturbation minimization..."):
+                    temp_rev_input = (
+                        uploaded_rev_template.getvalue() if uploaded_rev_template is not None else None
+                    )
+                    rev_pipeline_res = run_revision_pipeline(
+                        rev_a_file_or_data=bytes_a,
+                        rev_b_file_or_data=bytes_b,
+                        charms_per_baseplate=charms_per_bp,
+                        baseplates_per_cioc=baseplates_per_cioc,
+                        ciocs_per_cabinet=4,
+                        segregation_policy=segregation_policy,
+                        catalog=custom_catalog,
+                        template_file_or_bytes=temp_rev_input,
+                    )
+
+                rev_allocs = rev_pipeline_res.allocations
+                rev_excel_bytes = rev_pipeline_res.excel_bytes
+                rev_res = rev_pipeline_res.revision_result
+                diff = rev_res.diff_result
+
+                # --- 1. Executive Metrics Cards ---
+                st.write("### 1. Executive Revision Metrics")
+                rm1, rm2, rm3, rm4, rm5, rm6 = st.columns(6)
+                rm1.metric("Baseline Rev A", diff.total_rev_a)
+                rm2.metric("New Rev B", diff.total_rev_b)
+                rm3.metric("Unchanged (Frozen)", f"{len(diff.unchanged)} (Δ=0)")
+                rm4.metric("Added (Green)", len(diff.added))
+                rm5.metric("Deleted (Red)", len(diff.deleted))
+                rm6.metric("Relocated (Orange)", len(rev_res.moved_signals))
+
+                kpi_info1, kpi_info2 = st.columns(2)
+                kpi_info1.info(f"🎯 **Total Perturbation Penalty Score:** `{rev_res.perturbation_score}` (Weighted Displacement Metric)")
+                kpi_info2.success(f"🔄 **Vacated Slots Backfilled:** `{len(rev_res.backfilled_slots)}` slots successfully reused before opening new hardware.")
+
+                # --- 2. Interactive Color-Coded Revision Delta Viewer ---
+                st.write("### 2. Interactive Revision Delta Viewer")
+                delta_filter = st.radio(
+                    "Filter Changes by Status",
+                    options=["All", "Added (Green)", "Deleted (Red)", "Modified / Moved (Orange)", "Unchanged (Neutral)"],
+                    horizontal=True,
+                    key="delta_viewer_filter",
+                )
+
+                rev_b_by_tag = {a.tag: a for a in rev_allocs if a.tag}
+                delta_rows = []
+                for item in diff.items:
+                    st_val = item.status.value
+                    if delta_filter == "Added (Green)" and st_val != "ADDED":
+                        continue
+                    if delta_filter == "Deleted (Red)" and st_val != "DELETED":
+                        continue
+                    if delta_filter == "Modified / Moved (Orange)" and st_val != "MODIFIED":
+                        continue
+                    if delta_filter == "Unchanged (Neutral)" and st_val != "UNCHANGED":
+                        continue
+
+                    status_badge = (
+                        "🟢 ADDED" if st_val == "ADDED"
+                        else "🔴 DELETED" if st_val == "DELETED"
+                        else "🟠 MODIFIED" if st_val == "MODIFIED"
+                        else "⚪ UNCHANGED"
+                    )
+
+                    orig = item.rev_a_signal
+                    alloc = rev_b_by_tag.get(item.tag)
+
+                    loc_a = (
+                        f"{orig.cabinet_name} / {orig.cioc_name} / {orig.baseplate_name} / {orig.slot_name}"
+                        if isinstance(orig, AllocatedSignal)
+                        else "-"
+                    )
+                    loc_b = (
+                        f"{alloc.cabinet_name} / {alloc.cioc_name} / {alloc.baseplate_name} / {alloc.slot_name}"
+                        if alloc
+                        else "-"
+                    )
+
+                    displacement = (
+                        "DELETED (Vacated)" if st_val == "DELETED"
+                        else "NEW ALLOCATION" if st_val == "ADDED"
+                        else "STATIONARY (Frozen)" if st_val == "UNCHANGED"
+                        else "RELOCATED" if (
+                            alloc and orig and (alloc.cioc, alloc.baseplate, alloc.slot) != (
+                                getattr(orig, "cioc", None),
+                                getattr(orig, "baseplate", None),
+                                getattr(orig, "slot", None),
+                            )
+                        )
+                        else "MODIFIED IN PLACE"
+                    )
+
+                    delta_cost = 0
+                    if st_val == "MODIFIED" and alloc and isinstance(orig, AllocatedSignal):
+                        d_cab = 1 if alloc.cabinet_id != orig.cabinet_id else 0
+                        d_cioc = 1 if alloc.cioc != orig.cioc else 0
+                        d_bp = 1 if alloc.baseplate != orig.baseplate else 0
+                        d_slot = 1 if alloc.slot != orig.slot else 0
+                        delta_cost = 10000 * d_cab + 1000 * d_cioc + 100 * d_bp + 10 * d_slot
+
+                    target = alloc or orig or item.rev_b_signal or item.rev_a_signal
+                    io_type_val = getattr(target, "io_type", "AI")
+                    if hasattr(io_type_val, "value"):
+                        io_type_val = io_type_val.value
+
+                    delta_rows.append({
+                        "Status": status_badge,
+                        "Tag": item.tag,
+                        "Rev A Location": loc_a,
+                        "Rev B Location": loc_b,
+                        "Displacement": displacement,
+                        "Penalty Δ": delta_cost,
+                        "IO Type": io_type_val,
+                        "Cable ID": getattr(target, "cable_id", "-") or "-",
+                        "Pair No": getattr(target, "pair_no", "-") or "-",
+                        "Segregation": getattr(target, "segregation", "Common") or "Common",
+                        "Change Notes": "; ".join(item.changes) if item.changes else "Unchanged loop",
+                    })
+
+                df_delta = pd.DataFrame(delta_rows)
+                st.dataframe(highlight_diff_dataframe(df_delta), use_container_width=True)
+
+                # --- 3. Physical DIN-Rail Rack Visualizer ---
+                st.write("### 3. Updated Physical DIN-Rail Rack Visualizer (Rev B)")
+                if rev_allocs:
+                    render_streamlit_rack(rev_allocs, charms_per_baseplate=charms_per_bp)
+
+                # --- 4. Deliverable Package Download ---
+                st.write("### 4. Deliverable Package with Revision Impact")
+                st.success(
+                    "✅ **Revision Deliverable Generated:** Includes complete `Revision_Impact` matrix sheet, "
+                    "Allocation, TQ_Log, Cabinet_Summary, and Rule_Compliance audit."
+                )
+                st.download_button(
+                    label="💾 Download Complete Rev B Deliverable with Revision_Impact Tab (.xlsx)",
+                    data=rev_excel_bytes,
+                    file_name="deltav_rev_b_deliverable_with_revision_impact.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    help="Delivers complete multi-tab workbook including Revision_Impact comparison matrix.",
+                    key="btn_download_rev_b_deliv",
+                )
+        except Exception as e:
+            st.error(f"Error during revision processing: {e}")
+
+
+def main():
+    st.set_page_config(
+        page_title="IO Signal Sudoku | Automated TQ Engine & Revision Diff",
+        page_icon="⚡",
+        layout="wide",
+    )
+
+    st.title("⚡ IO Signal Sudoku")
+    st.subheader("DeltaV Electronic Marshalling: Automated CP-SAT Allocation & Revision Diff Engine")
+
+    st.markdown(
+        """
+        **Industrial Electronic Marshalling Suite:** Automated CP-SAT constraint optimization, 
+        A/B redundancy segregation, pre-solve data sanitization, customer revision diff & perturbation minimization.
+        """
+    )
+
+    with st.sidebar:
+        st.header("⚙️ Configuration")
+        solver_mode = st.radio(
+            "Solver Algorithm",
+            options=["Two-Stage Hierarchical (Trunk Cables & Spares)", "Walking Skeleton (Flat)"],
+            index=0,
+            help="Hierarchical mode groups signals into rigid multi-conductor cable blocks (2, 6, 12, 24 pairs), preserves ascending pair contiguity, and creates WIRED SPARE records.",
+        )
+        charms_per_bp = st.slider("CHARMs per Baseplate", min_value=6, max_value=24, value=12, step=2)
+        baseplates_per_cioc = st.slider("Baseplates per CIOC", min_value=4, max_value=12, value=8, step=1)
+        st.caption("Standard Emerson DeltaV DIN-rail baseplates host 12 CHARMs; CIOC carriers host up to 8 baseplates.")
+
+        st.subheader("🛡️ Safety Redundancy Rules")
+        segregation_policy = st.radio(
+            "A/B Segregation Policy",
+            options=["CIOC-level", "Cabinet-level"],
+            index=0,
+            help="CIOC-level enforces that Train A and Train B signals never reside on the same CIOC card.\nCabinet-level enforces that Train A and Train B signals never reside in the same Marshalling Cabinet.",
+        )
+
+        st.subheader("🛠️ Hardware Catalog Editor")
+        with st.expander("Customize CHARMs & Terminal Blocks", expanded=False):
+            st.caption("Edit CHARM models and terminal block mappings for each signal type:")
+            default_cat = load_hardware_catalog()
+            df_cat_init = catalog_to_dataframe(default_cat)
+            edited_cat_df = st.data_editor(
+                df_cat_init,
+                num_rows="fixed",
+                use_container_width=True,
+                key="hardware_catalog_editor",
+            )
+
+        custom_catalog = dataframe_to_catalog(edited_cat_df)
+
+    tab_single, tab_revision = st.tabs([
+        "🚀 Single Revision Allocation",
+        "🔄 Revision Diff & Perturbation Engine (Rev A vs Rev B)",
+    ])
+
+    with tab_single:
+        _render_single_allocation_tab(
+            solver_mode=solver_mode,
+            charms_per_bp=charms_per_bp,
+            baseplates_per_cioc=baseplates_per_cioc,
+            segregation_policy=segregation_policy,
+            custom_catalog=custom_catalog,
+        )
+
+    with tab_revision:
+        _render_revision_diff_tab(
+            charms_per_bp=charms_per_bp,
+            baseplates_per_cioc=baseplates_per_cioc,
+            segregation_policy=segregation_policy,
+            custom_catalog=custom_catalog,
+        )
 
 
 if __name__ == "__main__":

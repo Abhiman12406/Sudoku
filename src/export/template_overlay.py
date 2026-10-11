@@ -105,6 +105,7 @@ def overlay_allocation_on_template(
     Returns:
         openpyxl.Workbook with data injected and formatting intact.
     """
+    buffer: Union[BinaryIO, io.BytesIO]
     if isinstance(template_path_or_bytes, bytes):
         buffer = io.BytesIO(template_path_or_bytes)
     elif isinstance(template_path_or_bytes, (str, Path)):

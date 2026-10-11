@@ -125,6 +125,7 @@ def resolve_hardware_assignment(
     for a given signal or IOType, taking into account specialized industrial hardware rules
     and engineer overrides.
     """
+    io_type: Union[IOType, str]
     if isinstance(signal_or_io_type, Signal):
         io_type = signal_or_io_type.io_type
         description = signal_or_io_type.description

@@ -140,10 +140,10 @@ def verify_allocation_invariants(
 
         elif total_in_cable == 12 or pair_count == 12:
             # 12-pair cable: must span exactly 1 baseplate starting at slot 1
-            bps = {s.baseplate for s in sig_list}
-            if len(bps) != 1:
+            bps_set = {s.baseplate for s in sig_list}
+            if len(bps_set) != 1:
                 errors.append(
-                    f"12-pair cable '{cable_id}' must span exactly 1 baseplate, spans multiple {bps}"
+                    f"12-pair cable '{cable_id}' must span exactly 1 baseplate, spans multiple {bps_set}"
                 )
             first = sorted_by_pair[0]
             if first.slot != 1:
@@ -153,10 +153,10 @@ def verify_allocation_invariants(
 
         elif total_in_cable <= 12:
             # Sub-baseplate cable: must not cross baseplate boundaries
-            bps = {s.baseplate for s in sig_list}
-            if len(bps) > 1:
+            bps_set = {s.baseplate for s in sig_list}
+            if len(bps_set) > 1:
                 errors.append(
-                    f"Sub-baseplate cable '{cable_id}' ({total_in_cable} pairs) crosses baseplate boundaries: {bps}"
+                    f"Sub-baseplate cable '{cable_id}' ({total_in_cable} pairs) crosses baseplate boundaries: {bps_set}"
                 )
 
     # 3. Redundancy segregation audit

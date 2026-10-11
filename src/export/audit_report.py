@@ -143,12 +143,12 @@ def generate_rule_compliance_audit(
             if len(bps) != 2 or bps[1] != bps[0] + 1 or sorted_pairs[0].slot != 1:
                 boundary_violations += 1
         elif total_in_cable == 12 or pair_count == 12:
-            bps = {s.baseplate for s in sig_list}
-            if len(bps) != 1 or sorted_pairs[0].slot != 1:
+            bps_set = {s.baseplate for s in sig_list}
+            if len(bps_set) != 1 or sorted_pairs[0].slot != 1:
                 boundary_violations += 1
         elif total_in_cable <= 12:
-            bps = {s.baseplate for s in sig_list}
-            if len(bps) > 1:
+            bps_set = {s.baseplate for s in sig_list}
+            if len(bps_set) > 1:
                 boundary_violations += 1
 
     items.append(

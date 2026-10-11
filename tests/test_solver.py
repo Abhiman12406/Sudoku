@@ -53,7 +53,7 @@ def test_solve_signals_spanning_multiple_baseplates():
     assert len(allocations) == 15
 
     # Check capacity invariant: no baseplate has more than 12
-    bp_counts = {}
+    bp_counts: dict[int, int] = {}
     for a in allocations:
         bp_counts[a.baseplate] = bp_counts.get(a.baseplate, 0) + 1
         assert 1 <= a.slot <= 12
