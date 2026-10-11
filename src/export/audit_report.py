@@ -2,10 +2,16 @@
 
 from collections import defaultdict
 from dataclasses import dataclass
+from enum import Enum
 from typing import Dict, List, Optional, Sequence, Set, Tuple, Union
 
 from src.domain.models import AllocatedSignal, SegregationPolicy, TechnicalQuery
 from src.solver.audit import verify_allocation_invariants
+
+
+class AuditStatus(str, Enum):
+    PASS = "PASS"
+    FAIL = "FAIL"
 
 
 @dataclass
@@ -36,6 +42,7 @@ def generate_rule_compliance_audit(
     bps_per_cioc: int = 8,
     segregation_policy: Union[str, SegregationPolicy] = SegregationPolicy.CIOC,
     ciocs_per_cabinet: int = 4,
+    required_spare_margin: float = 0.0,
 ) -> Tuple[List[RuleComplianceItem], RuleComplianceSummary]:
     """Generate independent audit checklist evaluating all hard physical and safety rules.
 
@@ -46,6 +53,7 @@ def generate_rule_compliance_audit(
         bps_per_cioc: Baseplates per CIOC (8).
         segregation_policy: "CIOC" or "CABINET" segregation verification policy.
         ciocs_per_cabinet: CIOCs per cabinet (default: 4).
+        required_spare_margin: Reserve spare margin (0.0 .. 1.0).
 
     Returns:
         Tuple of (list_of_rule_items, summary).
@@ -61,7 +69,7 @@ def generate_rule_compliance_audit(
             out_of_bounds_count += 1
 
     collision_count = sum(len(tags) - 1 for tags in occupied.values() if len(tags) > 1)
-    status_r1 = "PASS" if collision_count == 0 else "FAIL"
+    status_r1 = AuditStatus.PASS.value if collision_count == 0 else AuditStatus.FAIL.value
     remarks_r1 = "Zero coordinate collisions detected." if collision_count == 0 else f"{collision_count} slot collisions detected!"
     items.append(
         RuleComplianceItem(
@@ -77,7 +85,7 @@ def generate_rule_compliance_audit(
     )
 
     # 2. Baseplate & CIOC Hardware Bounds
-    status_r2 = "PASS" if out_of_bounds_count == 0 else "FAIL"
+    status_r2 = AuditStatus.PASS.value if out_of_bounds_count == 0 else AuditStatus.FAIL.value
     remarks_r2 = f"All coordinates within 1..{bps_per_cioc} BP, 1..{charms_per_bp} Slot." if out_of_bounds_count == 0 else f"{out_of_bounds_count} coordinates out of bounds."
     items.append(
         RuleComplianceItem(
@@ -124,6 +132,12 @@ def generate_rule_compliance_audit(
         # Boundary checks
         total_in_cable = len(sig_list)
         pair_count = max(s.pair_no for s in sorted_pairs)  # type: ignore
+        ciocs_in_cable = {s.cioc for s in sig_list}
+
+        # Cable must never cross CIOC carrier boundaries
+        if len(ciocs_in_cable) > 1:
+            boundary_violations += 1
+
         if total_in_cable == 24 or pair_count == 24:
             bps = sorted(list({s.baseplate for s in sig_list}))
             if len(bps) != 2 or bps[1] != bps[0] + 1 or sorted_pairs[0].slot != 1:
@@ -145,7 +159,7 @@ def generate_rule_compliance_audit(
             requirement="All pairs in trunk cable must land contiguously with zero gaps",
             tested_count=len(cables),
             violations=contiguity_violations,
-            status="PASS" if contiguity_violations == 0 else "FAIL",
+            status=AuditStatus.PASS.value if contiguity_violations == 0 else AuditStatus.FAIL.value,
             remarks="Zero contiguity gaps detected." if contiguity_violations == 0 else f"{contiguity_violations} contiguity gaps detected.",
         )
     )
@@ -158,7 +172,7 @@ def generate_rule_compliance_audit(
             requirement="Pair p+1 physical coordinate must strictly exceed Pair p (no shuffling)",
             tested_count=len(cables),
             violations=shuffling_violations,
-            status="PASS" if shuffling_violations == 0 else "FAIL",
+            status=AuditStatus.PASS.value if shuffling_violations == 0 else AuditStatus.FAIL.value,
             remarks="Zero pair shuffling detected across all cables." if shuffling_violations == 0 else f"{shuffling_violations} pair shuffling errors.",
         )
     )
@@ -168,10 +182,10 @@ def generate_rule_compliance_audit(
             rule_id="RULE-CABL-03",
             rule_name="Baseplate Boundary Alignment",
             category="Cable Topology",
-            requirement="24-pair spans 2 BPs; 12-pair spans 1 BP; sub-12 does not cross BP",
+            requirement="24-pair spans 2 BPs; 12-pair spans 1 BP; sub-12 does not cross BP or CIOC",
             tested_count=len(cables),
             violations=boundary_violations,
-            status="PASS" if boundary_violations == 0 else "FAIL",
+            status=AuditStatus.PASS.value if boundary_violations == 0 else AuditStatus.FAIL.value,
             remarks="All trunk cables conform strictly to baseplate physical boundaries." if boundary_violations == 0 else f"{boundary_violations} boundary violations.",
         )
     )
@@ -189,7 +203,7 @@ def generate_rule_compliance_audit(
             requirement="Every active loop must resolve to a valid CHARM and Terminal Block",
             tested_count=sum(1 for a in allocations if not a.is_spare),
             violations=unresolved_hw,
-            status="PASS" if unresolved_hw == 0 else "FAIL",
+            status=AuditStatus.PASS.value if unresolved_hw == 0 else AuditStatus.FAIL.value,
             remarks="100% hardware compatibility verified against Emerson DeltaV catalog." if unresolved_hw == 0 else f"{unresolved_hw} signals unresolved.",
         )
     )
@@ -234,12 +248,36 @@ def generate_rule_compliance_audit(
             requirement=req_text,
             tested_count=tested_count,
             violations=total_breaches,
-            status="PASS" if total_breaches == 0 else "FAIL",
+            status=AuditStatus.PASS.value if total_breaches == 0 else AuditStatus.FAIL.value,
             remarks=remarks,
         )
     )
 
-    # 7. Pre-Solve Data Quality & TQ Quarantining
+    # 7. Spare Margin & Capacity Invariant (Invariant 7 from spec)
+    cab_usage: Dict[int, int] = defaultdict(int)
+    for a in allocations:
+        cab_usage[a.cabinet_id] += 1
+    cab_capacity = 4 * (charms_per_bp * bps_per_cioc)  # 384 channels
+    margin_violations = 0
+    for cab_id, used_count in cab_usage.items():
+        spare_ratio = (cab_capacity - used_count) / cab_capacity if cab_capacity > 0 else 0
+        if spare_ratio < (required_spare_margin - 0.001):
+            margin_violations += 1
+
+    items.append(
+        RuleComplianceItem(
+            rule_id="RULE-CAP-01",
+            rule_name="Reserved Spare Capacity Margin",
+            category="Capacity Invariants",
+            requirement=f"Cabinet spare capacity meets or exceeds reserved margin ({required_spare_margin * 100:.0f}%)",
+            tested_count=len(cab_usage) if cab_usage else 1,
+            violations=margin_violations,
+            status=AuditStatus.PASS.value if margin_violations == 0 else AuditStatus.FAIL.value,
+            remarks="Cabinet reserve spare capacity verified." if margin_violations == 0 else f"{margin_violations} cabinets below required spare margin.",
+        )
+    )
+
+    # 8. Pre-Solve Data Quality & TQ Quarantining
     crit_tqs = sum(1 for t in (tqs or []) if getattr(t.severity, "value", str(t.severity)) == "Critical")
     items.append(
         RuleComplianceItem(
@@ -248,13 +286,13 @@ def generate_rule_compliance_audit(
             category="Data Quality",
             requirement="Conflicting, corrupt, or duplicate rows safely quarantined to formal TQs",
             tested_count=len(allocations) + len(tqs or []),
-            violations=0,  # All were gracefully handled via TQs
-            status="PASS",
+            violations=0,
+            status=AuditStatus.PASS.value,
             remarks=f"Handled cleanly; {len(tqs or [])} formal TQs registered ({crit_tqs} Critical isolated)." if tqs else "100% input data valid with zero technical queries.",
         )
     )
 
-    passed = sum(1 for item in items if item.status == "PASS")
+    passed = sum(1 for item in items if item.status == AuditStatus.PASS.value)
     failed = len(items) - passed
     pass_rate = round((passed / len(items) * 100.0), 1) if items else 100.0
 

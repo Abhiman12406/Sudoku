@@ -368,9 +368,7 @@ def export_allocation_to_excel(
         # Tab 2: Allocation
         if "Allocation" not in wb.sheetnames:
             ws_alloc = wb.create_sheet(title="Allocation")
-        else:
-            ws_alloc = wb["Allocation"]
-        _populate_allocation_sheet(ws_alloc, allocations)
+            _populate_allocation_sheet(ws_alloc, allocations)
 
         # Tab 3: TQ_Log
         if "TQ_Log" not in wb.sheetnames:
