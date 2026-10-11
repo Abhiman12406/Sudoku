@@ -63,6 +63,65 @@ class RevisionDiffResult:
         return len(self.unchanged) + len(self.modified) + len(self.added)
 
 
+def calculate_perturbation_delta(
+    orig: Optional[AllocatedSignal],
+    alloc: Optional[AllocatedSignal],
+    ciocs_per_cabinet: int = 4,
+) -> int:
+    """Calculate the weighted movement metric (min Delta) between Rev A and Rev B positions:
+    Delta = 10000 * Delta_cab + 1000 * Delta_cioc + 100 * Delta_bp + 10 * Delta_slot
+    Hierarchical propagation ensures that moving across CIOCs also counts as moving baseplate/slot.
+    """
+    if orig is None or alloc is None:
+        return 0
+
+    orig_cab = orig.cabinet if orig.cabinet is not None else (orig.cioc - 1) // ciocs_per_cabinet + 1
+    alloc_cab = alloc.cabinet if alloc.cabinet is not None else (alloc.cioc - 1) // ciocs_per_cabinet + 1
+
+    d_cab = 1 if alloc_cab != orig_cab else 0
+    d_cioc = 1 if (d_cab or alloc.cioc != orig.cioc) else 0
+    d_bp = 1 if (d_cioc or alloc.baseplate != orig.baseplate) else 0
+    d_slot = 1 if (d_bp or alloc.slot != orig.slot) else 0
+
+    return 10000 * d_cab + 1000 * d_cioc + 100 * d_bp + 10 * d_slot
+
+
+def get_displacement_description(
+    status: Union[DiffStatus, str],
+    orig: Optional[AllocatedSignal],
+    alloc: Optional[AllocatedSignal],
+    ciocs_per_cabinet: int = 4,
+) -> str:
+    """Return descriptive displacement classification for engineering audit and UI."""
+    st_val = status.value if isinstance(status, DiffStatus) else str(status)
+    if st_val == DiffStatus.DELETED.value:
+        return "DELETED (Slot Vacated)"
+    elif st_val == DiffStatus.ADDED.value:
+        return "NEW ALLOCATION"
+    elif st_val == DiffStatus.UNCHANGED.value:
+        return "STATIONARY (Frozen)"
+
+    # MODIFIED
+    if not orig or not alloc:
+        return "MODIFIED"
+
+    delta = calculate_perturbation_delta(orig, alloc, ciocs_per_cabinet=ciocs_per_cabinet)
+    if delta == 0:
+        return "STATIONARY (Modified in Place)"
+
+    orig_cab = orig.cabinet if orig.cabinet is not None else (orig.cioc - 1) // ciocs_per_cabinet + 1
+    alloc_cab = alloc.cabinet if alloc.cabinet is not None else (alloc.cioc - 1) // ciocs_per_cabinet + 1
+
+    if alloc_cab != orig_cab:
+        return "CABINET SHIFT"
+    elif alloc.cioc != orig.cioc:
+        return "CIOC SHIFT"
+    elif alloc.baseplate != orig.baseplate:
+        return "BASEPLATE SHIFT"
+    return "SLOT SHIFT"
+
+
+
 def classify_revision_diff(
     rev_a: Sequence[Union[Signal, AllocatedSignal]],
     rev_b: Sequence[Signal],

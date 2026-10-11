@@ -8,7 +8,11 @@ import streamlit as st
 from src.domain.hardware import DEFAULT_CATALOG, load_hardware_catalog
 from src.domain.models import AllocatedSignal, TechnicalQuery
 from src.pipeline import run_hierarchical_pipeline, run_revision_pipeline, run_walking_pipeline
-from src.revision.classifier import DiffStatus
+from src.revision.classifier import (
+    DiffStatus,
+    calculate_perturbation_delta,
+    get_displacement_description,
+)
 from src.ui.components.cabinet_visualizer import render_streamlit_rack
 
 
@@ -329,10 +333,8 @@ def highlight_diff_dataframe(df_delta: pd.DataFrame) -> Any:
             return ["background-color: #E2EFDA; color: #276A3C; font-weight: bold;"] * len(row)
         elif "DELETED" in status_str:
             return ["background-color: #FCE4D6; color: #C00000; font-weight: bold;"] * len(row)
-        elif "MODIFIED" in status_str:
-            if row.get("Penalty Δ", 0) > 0 or "RELOCATED" in str(row.get("Displacement", "")):
-                return ["background-color: #FFF2CC; color: #B25900; font-weight: bold;"] * len(row)
-            return ["background-color: #FFFDF0; color: #595959;"] * len(row)
+        elif "MOVED" in status_str or row.get("Penalty Δ", 0) > 0 or "SHIFT" in str(row.get("Displacement", "")):
+            return ["background-color: #FFF2CC; color: #B25900; font-weight: bold;"] * len(row)
         return ["background-color: #FFFFFF; color: #333333;"] * len(row)
 
     try:
@@ -740,7 +742,7 @@ def _render_revision_diff_tab(
                 st.write("### 2. Interactive Revision Delta Viewer")
                 delta_filter = st.radio(
                     "Filter Changes by Status",
-                    options=["All", "Added (Green)", "Deleted (Red)", "Modified / Moved (Orange)", "Unchanged (Neutral)"],
+                    options=["All", "Added (Green)", "Deleted (Red)", "Moved (Orange)", "Unchanged / Stationary (Neutral)"],
                     horizontal=True,
                     key="delta_viewer_filter",
                 )
@@ -749,24 +751,39 @@ def _render_revision_diff_tab(
                 delta_rows = []
                 for item in diff.items:
                     st_val = item.status.value
+                    orig = item.rev_a_signal
+                    alloc = rev_b_by_tag.get(item.tag)
+
+                    orig_alloc = orig if isinstance(orig, AllocatedSignal) else None
+                    delta_cost = (
+                        calculate_perturbation_delta(orig_alloc, alloc, ciocs_per_cabinet=4)
+                        if st_val == "MODIFIED" and orig_alloc and alloc
+                        else 0
+                    )
+                    displacement = get_displacement_description(
+                        item.status,
+                        orig_alloc,
+                        alloc,
+                        ciocs_per_cabinet=4,
+                    )
+                    is_moved = (st_val == "MODIFIED" and delta_cost > 0)
+
                     if delta_filter == "Added (Green)" and st_val != "ADDED":
                         continue
                     if delta_filter == "Deleted (Red)" and st_val != "DELETED":
                         continue
-                    if delta_filter == "Modified / Moved (Orange)" and st_val != "MODIFIED":
+                    if delta_filter == "Moved (Orange)" and not is_moved:
                         continue
-                    if delta_filter == "Unchanged (Neutral)" and st_val != "UNCHANGED":
+                    if delta_filter == "Unchanged / Stationary (Neutral)" and (is_moved or st_val in ("ADDED", "DELETED")):
                         continue
 
                     status_badge = (
                         "🟢 ADDED" if st_val == "ADDED"
                         else "🔴 DELETED" if st_val == "DELETED"
-                        else "🟠 MODIFIED" if st_val == "MODIFIED"
+                        else "🟠 MOVED" if is_moved
+                        else "⚪ MODIFIED (In-Place)" if st_val == "MODIFIED"
                         else "⚪ UNCHANGED"
                     )
-
-                    orig = item.rev_a_signal
-                    alloc = rev_b_by_tag.get(item.tag)
 
                     loc_a = (
                         f"{orig.cabinet_name} / {orig.cioc_name} / {orig.baseplate_name} / {orig.slot_name}"
@@ -778,28 +795,6 @@ def _render_revision_diff_tab(
                         if alloc
                         else "-"
                     )
-
-                    displacement = (
-                        "DELETED (Vacated)" if st_val == "DELETED"
-                        else "NEW ALLOCATION" if st_val == "ADDED"
-                        else "STATIONARY (Frozen)" if st_val == "UNCHANGED"
-                        else "RELOCATED" if (
-                            alloc and orig and (alloc.cioc, alloc.baseplate, alloc.slot) != (
-                                getattr(orig, "cioc", None),
-                                getattr(orig, "baseplate", None),
-                                getattr(orig, "slot", None),
-                            )
-                        )
-                        else "MODIFIED IN PLACE"
-                    )
-
-                    delta_cost = 0
-                    if st_val == "MODIFIED" and alloc and isinstance(orig, AllocatedSignal):
-                        d_cab = 1 if alloc.cabinet_id != orig.cabinet_id else 0
-                        d_cioc = 1 if alloc.cioc != orig.cioc else 0
-                        d_bp = 1 if alloc.baseplate != orig.baseplate else 0
-                        d_slot = 1 if alloc.slot != orig.slot else 0
-                        delta_cost = 10000 * d_cab + 1000 * d_cioc + 100 * d_bp + 10 * d_slot
 
                     target = alloc or orig or item.rev_b_signal or item.rev_a_signal
                     io_type_val = getattr(target, "io_type", "AI")

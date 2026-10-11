@@ -8,7 +8,13 @@ from ortools.sat.python import cp_model
 
 from src.domain.hardware import resolve_hardware_assignment
 from src.domain.models import AllocatedSignal, IOType, SegregationPolicy, Signal
-from src.revision.classifier import DiffStatus, RevisionDiffResult, classify_revision_diff
+from src.revision.classifier import (
+    DiffStatus,
+    RevisionDiffResult,
+    SignalDiffItem,
+    calculate_perturbation_delta,
+    classify_revision_diff,
+)
 
 
 @dataclass
@@ -64,13 +70,11 @@ def solve_revision_allocation(
 
     # 1. Map Rev A baseline allocations
     rev_a_by_tag: Dict[str, AllocatedSignal] = {}
-    rev_a_occupied: Dict[Tuple[int, int, int], AllocatedSignal] = {}
     max_rev_a_cioc = 1
 
     for a in rev_a_allocations:
         if a.tag and not a.is_spare and a.tag.strip().upper() != "WIRED SPARE":
             rev_a_by_tag[a.tag] = a
-        rev_a_occupied[(a.cioc, a.baseplate, a.slot)] = a
         if a.cioc > max_rev_a_cioc:
             max_rev_a_cioc = a.cioc
 
@@ -81,7 +85,7 @@ def solve_revision_allocation(
         if orig:
             vacated_slots.append((orig.cioc, orig.baseplate, orig.slot))
 
-    # 3. Freeze UNCHANGED signals in their original Rev A coordinates
+    # 3. Freeze UNCHANGED signals (and non-physical MODIFIED signals) in their original Rev A coordinates
     final_allocations: List[AllocatedSignal] = []
     frozen_slots: Set[Tuple[int, int, int]] = set()
     stationary_signals: List[AllocatedSignal] = []
@@ -89,9 +93,17 @@ def solve_revision_allocation(
     # Map Rev B signals by tag for quick lookup
     rev_b_by_tag = {s.tag: s for s in rev_b_signals if s.tag}
 
-    for unc_item in diff_result.unchanged:
-        orig = rev_a_by_tag[unc_item.tag]
-        b_sig = rev_b_by_tag[unc_item.tag]
+    signals_to_freeze = list(diff_result.unchanged)
+    physical_mods: List[SignalDiffItem] = []
+    for mod_item in diff_result.modified:
+        if not mod_item.is_physical_change:
+            signals_to_freeze.append(mod_item)
+        else:
+            physical_mods.append(mod_item)
+
+    for item in signals_to_freeze:
+        orig = rev_a_by_tag[item.tag]
+        b_sig = rev_b_by_tag[item.tag]
         coord = (orig.cioc, orig.baseplate, orig.slot)
         frozen_slots.add(coord)
 
@@ -118,10 +130,10 @@ def solve_revision_allocation(
         final_allocations.append(frozen_alloc)
         stationary_signals.append(frozen_alloc)
 
-    # 4. Signals that need slot allocation: MODIFIED and ADDED
+    # 4. Signals that need slot allocation: physical MODIFIED and ADDED
     signals_to_assign: List[Tuple[Signal, Optional[AllocatedSignal], str]] = []  # (sig, orig_or_None, status)
 
-    for mod_item in diff_result.modified:
+    for mod_item in physical_mods:
         b_sig = rev_b_by_tag[mod_item.tag]
         orig = rev_a_by_tag.get(mod_item.tag)
         signals_to_assign.append((b_sig, orig, DiffStatus.MODIFIED.value))
@@ -329,11 +341,12 @@ def solve_revision_allocation(
                 is_vacated = (c, b, s) in vacated_slots
 
                 if orig is not None:
-                    # Modified signal: penalize movement from original position
-                    d_cab = 1 if cab != orig.cabinet_id else 0
-                    d_cioc = 1 if c != orig.cioc else 0
-                    d_bp = 1 if b != orig.baseplate else 0
-                    d_slot = 1 if s != orig.slot else 0
+                    # Modified signal: penalize movement from original position hierarchically
+                    orig_cab = orig.cabinet if orig.cabinet is not None else get_cab(orig.cioc)
+                    d_cab = 1 if cab != orig_cab else 0
+                    d_cioc = 1 if (d_cab or c != orig.cioc) else 0
+                    d_bp = 1 if (d_cioc or b != orig.baseplate) else 0
+                    d_slot = 1 if (d_bp or s != orig.slot) else 0
 
                     cost = (
                         10000 * d_cab
@@ -397,13 +410,9 @@ def solve_revision_allocation(
             if (c, b, s) in vacated_slots:
                 backfilled_slots.append((c, b, s))
 
-            # Calculate perturbation for this signal
+            # Calculate perturbation for this signal using shared domain metric
             if orig is not None:
-                d_cab = 1 if cab != orig.cabinet_id else 0
-                d_cioc = 1 if c != orig.cioc else 0
-                d_bp = 1 if b != orig.baseplate else 0
-                d_slot = 1 if s != orig.slot else 0
-                signal_delta = 10000 * d_cab + 1000 * d_cioc + 100 * d_bp + 10 * d_slot
+                signal_delta = calculate_perturbation_delta(orig, alloc, ciocs_per_cabinet=ciocs_per_cabinet)
                 perturbation_score += signal_delta
 
                 if signal_delta > 0:

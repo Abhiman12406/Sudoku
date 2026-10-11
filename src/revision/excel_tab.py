@@ -6,7 +6,12 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
 from src.domain.models import AllocatedSignal
-from src.revision.classifier import DiffStatus, SignalDiffItem
+from src.revision.classifier import (
+    DiffStatus,
+    SignalDiffItem,
+    calculate_perturbation_delta,
+    get_displacement_description,
+)
 from src.revision.solver import RevisionAllocationResult
 
 
@@ -158,52 +163,21 @@ def populate_revision_impact_sheet(
             loc_b = "-"
 
         # Movement type & delta
-        delta = 0
+        delta = calculate_perturbation_delta(orig, alloc) if item.status == DiffStatus.MODIFIED else 0
+        movement_type = get_displacement_description(item.status, orig, alloc)
+
         if item.status == DiffStatus.DELETED:
-            movement_type = "DELETED (Slot Vacated)"
             row_fill = fill_deleted
             row_font = font_deleted
         elif item.status == DiffStatus.ADDED:
-            movement_type = "NEW ALLOCATION"
             row_fill = fill_added
             row_font = font_added
-        elif item.status == DiffStatus.UNCHANGED:
-            movement_type = "STATIONARY (Frozen)"
+        elif item.status == DiffStatus.UNCHANGED or delta == 0:
             row_fill = fill_unchanged
             row_font = font_unchanged
         else:
-            # MODIFIED
-            if orig and alloc:
-                d_cab = 1 if alloc.cabinet_id != orig.cabinet_id else 0
-                d_cioc = 1 if alloc.cioc != orig.cioc else 0
-                d_bp = 1 if alloc.baseplate != orig.baseplate else 0
-                d_slot = 1 if alloc.slot != orig.slot else 0
-                delta = 10000 * d_cab + 1000 * d_cioc + 100 * d_bp + 10 * d_slot
-
-                if delta == 0:
-                    movement_type = "STATIONARY (Modified in Place)"
-                    row_fill = fill_unchanged
-                    row_font = font_unchanged
-                elif d_cab:
-                    movement_type = "CABINET SHIFT"
-                    row_fill = fill_moved
-                    row_font = font_moved
-                elif d_cioc:
-                    movement_type = "CIOC SHIFT"
-                    row_fill = fill_moved
-                    row_font = font_moved
-                elif d_bp:
-                    movement_type = "BASEPLATE SHIFT"
-                    row_fill = fill_moved
-                    row_font = font_moved
-                else:
-                    movement_type = "SLOT SHIFT"
-                    row_fill = fill_moved
-                    row_font = font_moved
-            else:
-                movement_type = "MODIFIED"
-                row_fill = fill_moved
-                row_font = font_moved
+            row_fill = fill_moved
+            row_font = font_moved
 
         # Data values
         target_sig = alloc or orig or item.rev_b_signal or item.rev_a_signal
