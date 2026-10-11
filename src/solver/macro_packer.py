@@ -49,17 +49,20 @@ def solve_macro_packing(
 
     total_pairs = sum(b.pair_count for b in cable_blocks)
     lower_bound_ciocs = max(1, math.ceil(total_pairs / eff_capacity))
-    # Upper bound on CIOCs: at most number of blocks, or lower bound + 2
-    max_ciocs = min(len(cable_blocks), lower_bound_ciocs + 3)
+    max_ciocs = len(cable_blocks)
 
     model = cp_model.CpModel()
 
     num_blocks = len(cable_blocks)
     y = {}  # y[k, c] in {0, 1}
     u = {}  # u[c] in {0, 1} indicator that CIOC c is used
+    u_a = {}  # Train A indicator per CIOC
+    u_b = {}  # Train B indicator per CIOC
 
     for c in range(1, max_ciocs + 1):
         u[c] = model.NewBoolVar(f"cioc_used_{c}")
+        u_a[c] = model.NewBoolVar(f"cioc_train_a_{c}")
+        u_b[c] = model.NewBoolVar(f"cioc_train_b_{c}")
 
     for k in range(num_blocks):
         for c in range(1, max_ciocs + 1):
@@ -76,6 +79,19 @@ def solve_macro_packing(
         # Linking: if any block is in c, u[c] must be 1
         for k in range(num_blocks):
             model.Add(u[c] >= y[k, c])
+
+    # Constraint 3: Linearized Indicator Redundancy Cuts (Train A / Train B mutual exclusion)
+    has_segregation = any(b.segregation in ("A", "B") for b in cable_blocks)
+    if has_segregation:
+        for c in range(1, max_ciocs + 1):
+            for k in range(num_blocks):
+                if cable_blocks[k].segregation == "A":
+                    model.Add(u_a[c] >= y[k, c])
+                elif cable_blocks[k].segregation == "B":
+                    model.Add(u_b[c] >= y[k, c])
+            # Train A and Train B never share the same CIOC: U_c^A + U_c^B <= 1
+            model.Add(u_a[c] + u_b[c] <= 1)
+
 
     # Symmetry breaking: u[1] >= u[2] >= ... >= u[max_ciocs]
     for c in range(1, max_ciocs):

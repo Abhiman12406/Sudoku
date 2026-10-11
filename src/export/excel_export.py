@@ -36,6 +36,18 @@ TQ_COLUMNS = [
 ]
 
 
+def _auto_fit_columns(ws, min_width: int = 12) -> None:
+    """Auto-fit column widths based on maximum string length in each column."""
+    for col in ws.columns:
+        max_len = 0
+        col_letter = get_column_letter(col[0].column)
+        for cell in col:
+            val_str = str(cell.value or "")
+            if len(val_str) > max_len:
+                max_len = len(val_str)
+        ws.column_dimensions[col_letter].width = max(max_len + 4, min_width)
+
+
 def export_allocation_to_excel(
     allocations: Sequence[AllocatedSignal],
     output_path_or_buffer: Optional[Union[str, Path, BinaryIO]] = None,
@@ -89,15 +101,7 @@ def export_allocation_to_excel(
                 cell.alignment = left_align
 
 
-    for col in ws_alloc.columns:
-        max_len = 0
-        col_letter = get_column_letter(col[0].column)
-        for cell in col:
-            val_str = str(cell.value or "")
-            if len(val_str) > max_len:
-                max_len = len(val_str)
-        ws_alloc.column_dimensions[col_letter].width = max(max_len + 4, 12)
-
+    _auto_fit_columns(ws_alloc, min_width=12)
     ws_alloc.freeze_panes = "A2"
 
     # --- Sheet 2: TQ_Log ---
@@ -125,15 +129,7 @@ def export_allocation_to_excel(
                 else:
                     cell.alignment = left_align
 
-    for col in ws_tq.columns:
-        max_len = 0
-        col_letter = get_column_letter(col[0].column)
-        for cell in col:
-            val_str = str(cell.value or "")
-            if len(val_str) > max_len:
-                max_len = len(val_str)
-        ws_tq.column_dimensions[col_letter].width = max(max_len + 4, 14)
-
+    _auto_fit_columns(ws_tq, min_width=14)
     ws_tq.freeze_panes = "A2"
 
     # Save workbook to memory buffer

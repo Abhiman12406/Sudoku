@@ -1,5 +1,6 @@
 """Fuzzy and regex column auto-mapper for customer signal spreadsheets."""
 
+import difflib
 import re
 from typing import Dict, List, Optional, Pattern, Sequence
 
@@ -84,6 +85,16 @@ def match_field_for_column(col_name: str) -> Optional[str]:
     for field, synonyms in NORMALIZED_SYNONYMS.items():
         if cleaned in synonyms:
             return field
+
+    # 3. Fuzzy matching with difflib
+    flat_synonyms: Dict[str, str] = {}
+    for field, synonyms in NORMALIZED_SYNONYMS.items():
+        for syn in synonyms:
+            flat_synonyms[syn] = field
+
+    close_matches = difflib.get_close_matches(cleaned, list(flat_synonyms.keys()), n=1, cutoff=0.75)
+    if close_matches:
+        return flat_synonyms[close_matches[0]]
 
     return None
 

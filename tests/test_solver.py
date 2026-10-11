@@ -30,10 +30,15 @@ def test_solve_single_cable_within_capacity():
     assert alloc_map["10-PSH-102"].slot < alloc_map["10-XV-102"].slot
 
     # CHARM and Terminal block assignments
+    assert alloc_map["10-FT-101"].charm_model == "Analog Input 4-20 mA HART"
     assert alloc_map["10-FT-101"].charm_part_no == "KL3001X1-BA1"
     assert alloc_map["10-FT-101"].terminal_block_type == "Standard"
+    assert alloc_map["10-FT-101"].terminal_block_part_no == "KL4001X1-BA1"
+
+    assert alloc_map["10-XV-102"].charm_model == "Discrete Output 24 VDC High-Side"
     assert alloc_map["10-XV-102"].charm_part_no == "KL3004X1-BA1"
     assert alloc_map["10-XV-102"].terminal_block_type == "Fused Injected-Power"
+    assert alloc_map["10-XV-102"].terminal_block_part_no == "KL4002X1-BA1"
 
 
 def test_solve_signals_spanning_multiple_baseplates():

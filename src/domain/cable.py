@@ -82,8 +82,14 @@ def build_cable_blocks(
         )
 
         # Extract segregation and io_group metadata
-        seg = next((s.segregation for s in sig_list if s.segregation), None)
+        segs = {s.segregation for s in sig_list if s.segregation}
+        if len(segs) > 1:
+            raise ValueError(
+                f"Cable '{cable_id}' contains conflicting segregation classifications: {segs}"
+            )
+        seg = next(iter(segs), None)
         grp = next((s.io_group for s in sig_list if s.io_group), None)
+
 
         cable_blocks.append(
             CableBlock(

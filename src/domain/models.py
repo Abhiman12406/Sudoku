@@ -75,6 +75,14 @@ class Severity(str, Enum):
     WARNING = "Warning"
     INFO = "Info"
 
+    @property
+    def badge(self) -> str:
+        if self == Severity.CRITICAL:
+            return "🔴 Critical"
+        elif self == Severity.WARNING:
+            return "🟡 Warning"
+        return "🔵 Info"
+
 
 class TechnicalQuery(BaseModel):
     tq_id: str = Field(..., description="Unique technical query identifier, e.g. TQ-INST-001")
@@ -83,11 +91,13 @@ class TechnicalQuery(BaseModel):
     description: str = Field(..., description="Detailed engineering description of the conflict or error")
     severity: Severity = Field(..., description="Severity level: Critical, Warning, or Info")
     recommended_remedy: str = Field(..., description="Prescriptive engineering remedy or resolution recommendation")
+    rule_code: Optional[str] = Field(default=None, description="Standard validation rule code, e.g. TQ-VAL-001")
     row_number: Optional[int] = Field(default=None, description="Source spreadsheet row number if applicable")
     cable_id: Optional[str] = Field(default=None, description="Associated trunk cable identifier if applicable")
 
     @property
     def recommended_action(self) -> str:
         return self.recommended_remedy
+
 
 

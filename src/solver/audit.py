@@ -104,14 +104,15 @@ def verify_allocation_invariants(
                     f"is not before Pair {nxt.pair_no} at pos {pos_nxt}"
                 )
 
-            # Contiguity check: if pair numbers are consecutive, positions must be consecutive
+            # Contiguity check: position step must match pair number delta exactly
             expected_delta = (nxt.pair_no or 0) - (curr.pair_no or 0)
             actual_delta = pos_nxt - pos_curr
-            if expected_delta == 1 and actual_delta != 1:
+            if actual_delta != expected_delta:
                 errors.append(
-                    f"Non-contiguous cable allocation for '{cable_id}': Gap between Pair {curr.pair_no} "
-                    f"(pos {pos_curr}) and Pair {nxt.pair_no} (pos {pos_nxt})"
+                    f"Non-contiguous cable allocation for '{cable_id}': Delta between Pair {curr.pair_no} "
+                    f"(pos {pos_curr}) and Pair {nxt.pair_no} (pos {pos_nxt}) is {actual_delta}, expected {expected_delta}"
                 )
+
 
         # Boundary checks for standard sizes
         pair_count = max(s.pair_no for s in sorted_by_pair)  # type: ignore

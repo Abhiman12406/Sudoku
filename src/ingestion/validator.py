@@ -95,6 +95,7 @@ def validate_dataframe(
                     description=f"Row {excel_row}: Missing required instrument tag.",
                     severity=Severity.CRITICAL,
                     recommended_remedy="Provide a unique, non-empty instrument tag per engineering P&ID standards.",
+                    rule_code="TQ-VAL-001",
                     row_number=excel_row,
                 )
             )
@@ -113,6 +114,7 @@ def validate_dataframe(
                     description=f"Row {excel_row}: Tag '{tag_str}' is missing required IO Type.",
                     severity=Severity.CRITICAL,
                     recommended_remedy="Specify an approved DeltaV IO type (AI, AO, DI, DO, RTD, TC).",
+                    rule_code="TQ-VAL-001",
                     row_number=excel_row,
                 )
             )
@@ -135,6 +137,7 @@ def validate_dataframe(
                     description=f"Row {excel_row}: Tag '{tag_str}' has unsupported IO Type '{raw_io_str}'.",
                     severity=Severity.CRITICAL,
                     recommended_remedy="Update signal IO type to an approved DeltaV IO type (AI, AO, DI, DO, RTD, TC).",
+                    rule_code="TQ-VAL-005",
                     row_number=excel_row,
                 )
             )
@@ -269,6 +272,7 @@ def validate_dataframe(
                     description=f"Duplicate instrument tag '{tag}' detected across rows {row_numbers}.",
                     severity=Severity.CRITICAL,
                     recommended_remedy="Verify instrument loop tagging against engineering P&ID and assign distinct tags.",
+                    rule_code="TQ-VAL-002",
                     row_number=row_numbers[0],
                 )
             )
@@ -293,6 +297,7 @@ def validate_dataframe(
                     description=f"Cable '{cable_id}' has conflicting duplicate pair number {pair_no} for tags {impacted_tags} in rows {row_numbers}.",
                     severity=Severity.CRITICAL,
                     recommended_remedy=f"Assign unique pair numbers (1..N) to all field signals sharing cable '{cable_id}'.",
+                    rule_code="TQ-VAL-003",
                     row_number=row_numbers[0],
                     cable_id=cable_id,
                 )
@@ -319,7 +324,24 @@ def validate_dataframe(
                     description=f"Cable '{cable_id}' bundles conflicting Train A and Train B signals (Train A: {tags_a} vs Train B: {tags_b}).",
                     severity=Severity.CRITICAL,
                     recommended_remedy="Segregate Train A and Train B field loops into physically separate trunk cables.",
+                    rule_code="TQ-VAL-004",
                     cable_id=cable_id,
+                )
+            )
+
+    # 8. Informational advisory TQs for home-run field connections (non-fatal)
+    for rec in row_records:
+        if rec["idx"] not in invalid_row_indices and not rec["cable_id"]:
+            tqs.append(
+                TechnicalQuery(
+                    tq_id=next_tq_id(),
+                    category="Single-Channel Home Run",
+                    impacted_tag=rec["tag"],
+                    description=f"Row {rec['excel_row']}: Signal '{rec['tag']}' has no trunk cable assigned; will land as single-pair home-run channel.",
+                    severity=Severity.INFO,
+                    recommended_remedy="Assign to a trunk cable if loop marshalls through a field junction box.",
+                    rule_code="TQ-INFO-001",
+                    row_number=rec["excel_row"],
                 )
             )
 

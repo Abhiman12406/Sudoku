@@ -155,6 +155,34 @@ def format_severity_badge(severity: str) -> str:
     return sev
 
 
+def catalog_to_dataframe(catalog: dict) -> pd.DataFrame:
+    """Convert hardware catalog dictionary to editable DataFrame."""
+    rows = []
+    for sig_key in ["AI", "AO", "DI", "DO", "DO_RELAY", "TC", "RTD"]:
+        entry = catalog.get(sig_key, {})
+        rows.append({
+            "Signal Type": sig_key,
+            "CHARM Model": entry.get("charm_description") or entry.get("charm_model", ""),
+            "CHARM Part No": entry.get("charm_part_no", ""),
+            "Terminal Block Type": entry.get("terminal_block_type", "Standard"),
+            "Terminal Block Part No": entry.get("terminal_block_part_no", ""),
+        })
+    return pd.DataFrame(rows)
+
+
+def dataframe_to_catalog(df: pd.DataFrame) -> dict:
+    """Convert edited DataFrame back into hardware catalog dictionary."""
+    custom_catalog = {}
+    for _, r in df.iterrows():
+        custom_catalog[str(r["Signal Type"])] = {
+            "charm_description": str(r["CHARM Model"]),
+            "charm_part_no": str(r["CHARM Part No"]),
+            "terminal_block_type": str(r["Terminal Block Type"]),
+            "terminal_block_part_no": str(r["Terminal Block Part No"]),
+        }
+    return custom_catalog
+
+
 def main():
     st.set_page_config(
         page_title="IO Signal Sudoku | Automated TQ Engine",
@@ -218,17 +246,7 @@ def main():
         with st.expander("Customize CHARMs & Terminal Blocks", expanded=False):
             st.caption("Edit CHARM models and terminal block mappings for each signal type:")
             default_cat = load_hardware_catalog()
-            cat_rows = []
-            for sig_key in ["AI", "AO", "DI", "DO", "DO_RELAY", "TC", "RTD"]:
-                entry = default_cat.get(sig_key, {})
-                cat_rows.append({
-                    "Signal Type": sig_key,
-                    "CHARM Model": entry.get("charm_description") or entry.get("charm_model", ""),
-                    "CHARM Part No": entry.get("charm_part_no", ""),
-                    "Terminal Block Type": entry.get("terminal_block_type", "Standard"),
-                    "Terminal Block Part No": entry.get("terminal_block_part_no", ""),
-                })
-            df_cat_init = pd.DataFrame(cat_rows)
+            df_cat_init = catalog_to_dataframe(default_cat)
             edited_cat_df = st.data_editor(
                 df_cat_init,
                 num_rows="fixed",
@@ -236,14 +254,7 @@ def main():
                 key="hardware_catalog_editor",
             )
 
-        custom_catalog = {}
-        for _, r in edited_cat_df.iterrows():
-            custom_catalog[str(r["Signal Type"])] = {
-                "charm_description": str(r["CHARM Model"]),
-                "charm_part_no": str(r["CHARM Part No"]),
-                "terminal_block_type": str(r["Terminal Block Type"]),
-                "terminal_block_part_no": str(r["Terminal Block Part No"]),
-            }
+        custom_catalog = dataframe_to_catalog(edited_cat_df)
 
     if uploaded_file is not None:
         try:
@@ -310,7 +321,7 @@ def main():
                     tq_rows = [
                         {
                             "TQ ID": t.tq_id,
-                            "Severity": format_severity_badge(t.severity.value),
+                            "Severity": t.severity.badge,
                             "Category": t.category,
                             "Impacted Tag": t.impacted_tag,
                             "Description": t.description,
