@@ -100,6 +100,8 @@ def solve_walking_skeleton(
                 io_type=sig.io_type,
                 baseplate=bp_val,
                 slot=slot_val,
+                cioc=1,
+                cabinet=1,
                 cable_id=sig.cable_id,
                 pair_no=sig.pair_no,
                 description=sig.description,
@@ -107,6 +109,7 @@ def solve_walking_skeleton(
                 charm_part_no=hw.charm_part_no,
                 terminal_block_type=hw.terminal_block_type,
                 terminal_block_part_no=hw.terminal_block_part_no,
+                segregation=sig.segregation,
             )
         )
 

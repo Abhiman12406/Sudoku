@@ -75,6 +75,7 @@ def slot_cable_blocks_in_cioc(
     charms_per_baseplate: int = 12,
     time_limit_seconds: float = 10.0,
     catalog: Optional[Dict[str, Any]] = None,
+    ciocs_per_cabinet: int = 4,
 ) -> List[AllocatedSignal]:
     """Micro-slotting solver for assigning CableBlocks inside a single CIOC card.
 
@@ -198,6 +199,7 @@ def slot_cable_blocks_in_cioc(
                         baseplate=bp,
                         slot=slot,
                         cioc=cioc_id,
+                        cabinet=(cioc_id - 1) // ciocs_per_cabinet + 1,
                         cable_id=block.cable_id,
                         pair_no=p,
                         description=sig.description,
@@ -205,6 +207,7 @@ def slot_cable_blocks_in_cioc(
                         charm_part_no=hw.charm_part_no,
                         terminal_block_type=hw.terminal_block_type,
                         terminal_block_part_no=hw.terminal_block_part_no,
+                        segregation=sig.segregation or block.segregation,
                         is_spare=False,
                     )
                 )
@@ -217,6 +220,7 @@ def slot_cable_blocks_in_cioc(
                         baseplate=bp,
                         slot=slot,
                         cioc=cioc_id,
+                        cabinet=(cioc_id - 1) // ciocs_per_cabinet + 1,
                         cable_id=block.cable_id,
                         pair_no=p,
                         description=f"Wired Spare Pair {p} ({block.cable_id})",
@@ -224,6 +228,7 @@ def slot_cable_blocks_in_cioc(
                         charm_part_no=hw_spare.charm_part_no,
                         terminal_block_type=hw_spare.terminal_block_type,
                         terminal_block_part_no=hw_spare.terminal_block_part_no,
+                        segregation=block.segregation,
                         is_spare=True,
                     )
                 )

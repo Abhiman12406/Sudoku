@@ -1,15 +1,17 @@
 """Independent Post-Solve Hard Constraint Verification Audit Pass."""
 
 from collections import defaultdict
-from typing import Dict, List, Sequence, Tuple
+from typing import Dict, List, Sequence, Set, Tuple, Union
 
-from src.domain.models import AllocatedSignal
+from src.domain.models import AllocatedSignal, SegregationPolicy
 
 
 def verify_allocation_invariants(
     allocations: Sequence[AllocatedSignal],
     charms_per_baseplate: int = 12,
     baseplates_per_cioc: int = 8,
+    segregation_policy: Union[str, SegregationPolicy] = SegregationPolicy.CIOC,
+    ciocs_per_cabinet: int = 4,
 ) -> Tuple[bool, List[str]]:
     """Verify 100% compliance with DeltaV physical and contiguity invariants.
 
@@ -22,11 +24,16 @@ def verify_allocation_invariants(
          - 24-pair cables span exactly 2 consecutive baseplates (slots 1..12 each).
          - 12-pair cables span exactly 1 baseplate (slots 1..12).
          - Sub-baseplate cables (<= 12 pairs) never cross baseplate boundaries.
+      6. A/B Redundancy Segregation compliance:
+         - Zero CIOCs contain mixed Train A and Train B signals (U_c^A + U_c^B <= 1).
+         - Zero Cabinets contain mixed Train A and Train B signals if Cabinet policy is active.
 
     Args:
         allocations: Sequence of AllocatedSignal objects.
         charms_per_baseplate: Number of slots per baseplate (12).
         baseplates_per_cioc: Number of baseplates per CIOC (8).
+        segregation_policy: "CIOC" or "CABINET" segregation verification policy.
+        ciocs_per_cabinet: Number of CIOCs per Cabinet (default: 4).
 
     Returns:
         Tuple of (is_valid, list_of_error_messages).
@@ -150,6 +157,39 @@ def verify_allocation_invariants(
             if len(bps) > 1:
                 errors.append(
                     f"Sub-baseplate cable '{cable_id}' ({total_in_cable} pairs) crosses baseplate boundaries: {bps}"
+                )
+
+    # 3. Redundancy segregation audit
+    policy = (
+        SegregationPolicy.from_str(segregation_policy)
+        if isinstance(segregation_policy, str)
+        else segregation_policy
+    )
+
+    # 3a. CIOC-level segregation: Train A and Train B must never share any CIOC
+    cioc_trains: Dict[int, Set[str]] = defaultdict(set)
+    for alloc in allocations:
+        if alloc.segregation in ("A", "B"):
+            cioc_trains[alloc.cioc].add(alloc.segregation)
+
+    for c, trains in cioc_trains.items():
+        if "A" in trains and "B" in trains:
+            errors.append(
+                f"Segregation breach: CIOC {c} contains mixed Train A and Train B signals"
+            )
+
+    # 3b. Cabinet-level segregation: Train A and Train B must never share any Cabinet
+    if policy == SegregationPolicy.CABINET:
+        cab_trains: Dict[int, Set[str]] = defaultdict(set)
+        for alloc in allocations:
+            if alloc.segregation in ("A", "B"):
+                cab_id = alloc.cabinet if alloc.cabinet else (alloc.cioc - 1) // ciocs_per_cabinet + 1
+                cab_trains[cab_id].add(alloc.segregation)
+
+        for cab, trains in cab_trains.items():
+            if "A" in trains and "B" in trains:
+                errors.append(
+                    f"Segregation breach: Cabinet {cab} contains mixed Train A and Train B signals"
                 )
 
     return len(errors) == 0, errors

@@ -70,6 +70,8 @@ def build_rack_grid_data(
                             "terminal_block_type": alloc.terminal_block_type,
                             "terminal_block_part_no": alloc.terminal_block_part_no,
                             "description": alloc.description,
+                            "segregation": alloc.segregation,
+                            "cabinet": alloc.cabinet,
                             "is_spare": alloc.is_spare,
                             "is_empty": False,
                         }
@@ -87,6 +89,8 @@ def build_rack_grid_data(
                             "terminal_block_type": None,
                             "terminal_block_part_no": None,
                             "description": None,
+                            "segregation": None,
+                            "cabinet": None,
                             "is_spare": False,
                             "is_empty": True,
                         }
@@ -227,7 +231,33 @@ def render_din_rail_html(
     )
 
     for cioc_id, bp_dict in grid.items():
-        html_parts.append(f"<div class='cioc-banner'>⚡ CIOC CARD {cioc_id:02d} (Carrier Racks)</div>")
+        cioc_allocs = [a for a in allocations if a.cioc == cioc_id]
+        trains = {a.segregation for a in cioc_allocs if a.segregation}
+        cab_id = next((a.cabinet for a in cioc_allocs if a.cabinet), (cioc_id - 1) // 4 + 1)
+
+        if "A" in trains and "B" in trains:
+            border_color = "#E53935"
+            bg_style = "background: linear-gradient(90deg, #2D1418 0%, #1E232E 100%);"
+            badge = "<span style='background:#E53935;color:#FFFFFF;padding:3px 10px;border-radius:4px;font-size:11px;font-weight:800;'>🚨 TRAIN MIXED (BREACH)</span>"
+        elif "A" in trains:
+            border_color = "#1E88E5"
+            bg_style = "background: linear-gradient(90deg, #10243E 0%, #1E232E 100%);"
+            badge = "<span style='background:#1E88E5;color:#FFFFFF;padding:3px 10px;border-radius:4px;font-size:11px;font-weight:800;'>🛡️ TRAIN A (BLUE)</span>"
+        elif "B" in trains:
+            border_color = "#FFA000"
+            bg_style = "background: linear-gradient(90deg, #332612 0%, #1E232E 100%);"
+            badge = "<span style='background:#FFA000;color:#1A1A1A;padding:3px 10px;border-radius:4px;font-size:11px;font-weight:800;'>🛡️ TRAIN B (AMBER)</span>"
+        else:
+            border_color = "#546E7A"
+            bg_style = "background: #1E232E;"
+            badge = "<span style='background:#37474F;color:#CFD8DC;padding:3px 8px;border-radius:4px;font-size:11px;font-weight:600;'>COMMON / UNASSIGNED</span>"
+
+        html_parts.append(
+            f"<div class='cioc-banner' style='border-left: 5px solid {border_color}; {bg_style} display:flex; justify-content:space-between; align-items:center;'>"
+            f"<div>⚡ CIOC CARD {cioc_id:02d} <span style='font-size:12px;opacity:0.75;font-weight:normal;'>(Cabinet {cab_id:02d})</span></div>"
+            f"<div>{badge}</div>"
+            f"</div>"
+        )
 
         for bp_id, slots in bp_dict.items():
             html_parts.append("<div class='baseplate-row'>")
@@ -236,6 +266,13 @@ def render_din_rail_html(
 
             for slot_info in slots:
                 s_num = slot_info["slot"]
+                seg_val = slot_info.get("segregation")
+                seg_badge = ""
+                if seg_val in ("A", "B"):
+                    seg_bg = "#1E88E5" if seg_val == "A" else "#FFA000"
+                    seg_fg = "#FFFFFF" if seg_val == "A" else "#1A1A1A"
+                    seg_badge = f"<span style='font-size:8px;font-weight:800;padding:1px 3px;border-radius:2px;background:{seg_bg};color:{seg_fg};margin-left:3px;'>[{seg_val}]</span>"
+
                 if slot_info["is_empty"]:
                     html_parts.append(
                         f"<div class='charm-card charm-card-empty'>"
@@ -247,7 +284,7 @@ def render_din_rail_html(
                     spare_tb = slot_info.get("terminal_block_type") or "Standard"
                     html_parts.append(
                         f"<div class='charm-card charm-card-spare' style='border-top: 3px solid {cable_color};' title='WIRED SPARE\nTB: {spare_tb}'>"
-                        f"<div class='slot-pill'>SLOT {s_num:02d}</div>"
+                        f"<div class='slot-pill'>SLOT {s_num:02d}{seg_badge}</div>"
                         f"<div class='cable-badge' style='background: {cable_color};'>P{slot_info['pair_no']:02d}</div>"
                         f"<div class='tag-label' style='color:#B0BEC5;'>WIRED SPARE</div>"
                         f"<div class='type-badge'>{slot_info['cable_id'] or '-'}</div>"
@@ -259,12 +296,13 @@ def render_din_rail_html(
                     hw_title = (
                         f"Tag: {slot_info['tag']}\n"
                         f"CHARM: {slot_info.get('charm_model') or '-'} ({slot_info.get('charm_part_no') or '-'})\n"
-                        f"TB: {slot_info.get('terminal_block_type') or '-'} ({slot_info.get('terminal_block_part_no') or '-'})"
+                        f"TB: {slot_info.get('terminal_block_type') or '-'} ({slot_info.get('terminal_block_part_no') or '-'})\n"
+                        f"Segregation: {seg_val or 'None'}"
                     )
                     tb_type_str = slot_info.get('terminal_block_type') or 'Standard'
                     html_parts.append(
                         f"<div class='charm-card charm-card-occupied' style='border-top: 3px solid {cable_color};' title='{hw_title}'>"
-                        f"<div class='slot-pill'>SLOT {s_num:02d}</div>"
+                        f"<div class='slot-pill'>SLOT {s_num:02d}{seg_badge}</div>"
                         f"<div class='cable-badge' style='background: {cable_color};'>P{slot_info['pair_no']:02d}</div>"
                         f"<div class='tag-label' title='{slot_info['tag']}'>{slot_info['tag']}</div>"
                         f"<div class='type-badge'>{slot_info['io_type']} | {slot_info['cable_id']}</div>"
@@ -316,6 +354,49 @@ def render_streamlit_rack(
                     <div style="font-size: 11px; color: #B0BEC5;">
                         <b>{total_pairs} Pairs</b> ({active_cnt} active, {spare_cnt} spare)<br>
                         Location: <code>{bp_str}</code>
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+    # Render CIOC Redundancy Segregation Status
+    ciocs = sorted(list({a.cioc for a in allocations}))
+    st.write("#### 🛡️ CIOC Redundancy Segregation Status")
+    cioc_cols = st.columns(min(max(len(ciocs), 1), 4))
+    for idx, c in enumerate(ciocs):
+        col = cioc_cols[idx % len(cioc_cols)]
+        c_allocs = [a for a in allocations if a.cioc == c]
+        c_trains = {a.segregation for a in c_allocs if a.segregation}
+        cab_id = next((a.cabinet for a in c_allocs if a.cabinet), (c - 1) // 4 + 1)
+        if "A" in c_trains and "B" in c_trains:
+            color = "#E53935"
+            label = "🚨 TRAIN MIXED"
+            train_desc = "Segregation breach"
+        elif "A" in c_trains:
+            color = "#1E88E5"
+            label = "🛡️ TRAIN A (BLUE)"
+            train_desc = f"{sum(1 for a in c_allocs if a.segregation == 'A')} Train A channels"
+        elif "B" in c_trains:
+            color = "#FFA000"
+            label = "🛡️ TRAIN B (AMBER)"
+            train_desc = f"{sum(1 for a in c_allocs if a.segregation == 'B')} Train B channels"
+        else:
+            color = "#546E7A"
+            label = "COMMON"
+            train_desc = "Unassigned channels"
+
+        with col:
+            st.markdown(
+                f"""
+                <div style="background: #1C2333; border-left: 5px solid {color}; padding: 8px 12px; border-radius: 6px; margin-bottom: 8px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <span style="font-weight: bold; font-size: 13px; color: #FFFFFF;">CIOC-{c:02d}</span>
+                        <span style="font-size: 10px; background: {color}; color: {'#1A1A1A' if color=='#FFA000' else '#FFFFFF'}; padding: 2px 6px; border-radius: 3px; font-weight: bold;">{label}</span>
+                    </div>
+                    <div style="font-size: 11px; color: #B0BEC5; margin-top: 4px;">
+                        Cabinet: <code>CAB-{cab_id:02d}</code><br>
+                        Channels: <b>{len(c_allocs)}</b> ({train_desc})
                     </div>
                 </div>
                 """,

@@ -1,17 +1,21 @@
-"""Excel export module for allocated DeltaV signals and Technical Queries."""
+"""Excel export module for 5-tab DeltaV engineering deliverable packages."""
 
 import io
 from pathlib import Path
-from typing import BinaryIO, Optional, Sequence, Union
+from typing import BinaryIO, Dict, List, Optional, Sequence, Union
 import openpyxl
-from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
 from src.domain.models import AllocatedSignal, TechnicalQuery
+from src.export.audit_report import generate_rule_compliance_audit
+from src.export.metrics import compute_cabinet_summary
+from src.export.template_overlay import overlay_allocation_on_template
 
 ALLOCATION_COLUMNS = [
     ("Tag", "tag"),
     ("IO Type", "io_type"),
+    ("Cabinet", "cabinet_name"),
     ("CIOC", "cioc"),
     ("Baseplate", "baseplate"),
     ("Slot", "slot"),
@@ -21,7 +25,9 @@ ALLOCATION_COLUMNS = [
     ("CHARM Part No", "charm_part_no"),
     ("Terminal Block Type", "terminal_block_type"),
     ("Terminal Block Part No", "terminal_block_part_no"),
+    ("Segregation", "segregation"),
     ("Description", "description"),
+    ("Status", "status"),
 ]
 
 COLUMNS = ALLOCATION_COLUMNS
@@ -33,6 +39,28 @@ TQ_COLUMNS = [
     ("Impacted Tag", "impacted_tag"),
     ("Description", "description"),
     ("Recommended Remedy", "recommended_remedy"),
+]
+
+CABINET_SUMMARY_COLUMNS = [
+    ("Cabinet ID", "cabinet_id"),
+    ("Active CIOCs", "ciocs_list"),
+    ("Total Capacity", "total_capacity"),
+    ("Active Loops", "active_loops"),
+    ("Wired Spares", "wired_spares"),
+    ("Total Allocated", "total_allocated"),
+    ("Free Spares", "free_spares"),
+    ("Utilization %", "utilization_str"),
+]
+
+RULE_COMPLIANCE_COLUMNS = [
+    ("Rule ID", "rule_id"),
+    ("Rule Name", "rule_name"),
+    ("Category", "category"),
+    ("Requirement", "requirement"),
+    ("Tested Count", "tested_count"),
+    ("Violations", "violations"),
+    ("Status", "status"),
+    ("Remarks", "remarks"),
 ]
 
 
@@ -48,91 +76,354 @@ def _auto_fit_columns(ws, min_width: int = 12) -> None:
         ws.column_dimensions[col_letter].width = max(max_len + 4, min_width)
 
 
-def export_allocation_to_excel(
-    allocations: Sequence[AllocatedSignal],
-    output_path_or_buffer: Optional[Union[str, Path, BinaryIO]] = None,
-    tqs: Optional[Sequence[TechnicalQuery]] = None,
-) -> bytes:
-    """Export allocated signals to a styled Excel workbook (.xlsx).
-
-    Args:
-        allocations: Sequence of AllocatedSignal objects.
-        output_path_or_buffer: Optional file path or buffer to write to.
-        tqs: Optional sequence of TechnicalQuery records to write to TQ_Log sheet.
-
-    Returns:
-        Raw bytes of the generated Excel workbook.
-    """
-    wb = openpyxl.Workbook()
-
-    # --- Sheet 1: Allocation ---
-    ws_alloc = wb.active
-    ws_alloc.title = "Allocation"
-
-    # Header styling for Allocation
+def _populate_allocation_sheet(ws, allocations: Sequence[AllocatedSignal]) -> None:
+    """Populate and format the Allocation worksheet."""
     alloc_header_font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
     alloc_header_fill = PatternFill(start_color="1F497D", end_color="1F497D", fill_type="solid")
     center_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
     left_align = Alignment(horizontal="left", vertical="center")
 
+    thin_border = Border(
+        left=Side(style="thin", color="D9D9D9"),
+        right=Side(style="thin", color="D9D9D9"),
+        top=Side(style="thin", color="D9D9D9"),
+        bottom=Side(style="thin", color="D9D9D9"),
+    )
+
     for col_idx, (col_name, _) in enumerate(ALLOCATION_COLUMNS, start=1):
-        cell = ws_alloc.cell(row=1, column=col_idx, value=col_name)
+        cell = ws.cell(row=1, column=col_idx, value=col_name)
         cell.font = alloc_header_font
         cell.fill = alloc_header_fill
         cell.alignment = center_align
 
     spare_font = Font(name="Calibri", size=10, italic=True, color="595959")
     spare_fill = PatternFill(start_color="F2F2F2", end_color="F2F2F2", fill_type="solid")
+    train_a_font = Font(name="Calibri", size=10, color="002060", bold=True)
+    train_b_font = Font(name="Calibri", size=10, color="B25900", bold=True)
 
     for row_idx, alloc in enumerate(allocations, start=2):
         for col_idx, (_, attr_name) in enumerate(ALLOCATION_COLUMNS, start=1):
-            val = getattr(alloc, attr_name)
-            if hasattr(val, "value"):
-                val = val.value
-            cell = ws_alloc.cell(row=row_idx, column=col_idx, value=val)
+            if attr_name == "status":
+                val = "WIRED SPARE" if alloc.is_spare else "Active Loop"
+            else:
+                val = getattr(alloc, attr_name)
+                if hasattr(val, "value"):
+                    val = val.value
+
+            cell = ws.cell(row=row_idx, column=col_idx, value=val)
+            cell.border = thin_border
 
             if alloc.is_spare:
                 cell.font = spare_font
                 cell.fill = spare_fill
+            elif attr_name == "segregation":
+                if val == "A":
+                    cell.font = train_a_font
+                elif val == "B":
+                    cell.font = train_b_font
 
-            if attr_name in ("cioc", "baseplate", "slot", "pair_no", "io_type"):
+            if attr_name in ("cioc", "baseplate", "slot", "pair_no", "io_type", "segregation", "cabinet_name", "status"):
                 cell.alignment = Alignment(horizontal="center", vertical="center")
             else:
                 cell.alignment = left_align
 
+    _auto_fit_columns(ws, min_width=12)
+    ws.freeze_panes = "A2"
 
-    _auto_fit_columns(ws_alloc, min_width=12)
-    ws_alloc.freeze_panes = "A2"
 
-    # --- Sheet 2: TQ_Log ---
-    ws_tq = wb.create_sheet(title="TQ_Log")
-
+def _populate_tq_sheet(ws, tqs: Optional[Sequence[TechnicalQuery]]) -> None:
+    """Populate and format the TQ_Log worksheet."""
     tq_header_font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
     tq_header_fill = PatternFill(start_color="800000", end_color="800000", fill_type="solid")
+    center_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    left_align = Alignment(horizontal="left", vertical="center")
+
+    thin_border = Border(
+        left=Side(style="thin", color="D9D9D9"),
+        right=Side(style="thin", color="D9D9D9"),
+        top=Side(style="thin", color="D9D9D9"),
+        bottom=Side(style="thin", color="D9D9D9"),
+    )
 
     for col_idx, (col_name, _) in enumerate(TQ_COLUMNS, start=1):
-        cell = ws_tq.cell(row=1, column=col_idx, value=col_name)
+        cell = ws.cell(row=1, column=col_idx, value=col_name)
         cell.font = tq_header_font
         cell.fill = tq_header_fill
         cell.alignment = center_align
 
     if tqs:
+        crit_fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
+        crit_font = Font(name="Calibri", size=10, bold=True, color="9C0006")
+        warn_fill = PatternFill(start_color="FFEB9C", end_color="FFEB9C", fill_type="solid")
+        warn_font = Font(name="Calibri", size=10, bold=True, color="9C6500")
+
         for row_idx, tq in enumerate(tqs, start=2):
+            sev_str = getattr(tq.severity, "value", str(tq.severity))
             for col_idx, (_, attr_name) in enumerate(TQ_COLUMNS, start=1):
                 val = getattr(tq, attr_name)
                 if hasattr(val, "value"):
                     val = val.value
-                cell = ws_tq.cell(row=row_idx, column=col_idx, value=val)
+                cell = ws.cell(row=row_idx, column=col_idx, value=val)
+                cell.border = thin_border
 
-                if attr_name in ("tq_id", "severity"):
+                if attr_name == "severity":
                     cell.alignment = Alignment(horizontal="center", vertical="center")
+                    if sev_str == "Critical":
+                        cell.fill = crit_fill
+                        cell.font = crit_font
+                    elif sev_str == "Warning":
+                        cell.fill = warn_fill
+                        cell.font = warn_font
+                elif attr_name == "tq_id":
+                    cell.alignment = Alignment(horizontal="center", vertical="center")
+                    cell.font = Font(name="Calibri", size=10, bold=True)
                 else:
                     cell.alignment = left_align
 
-    _auto_fit_columns(ws_tq, min_width=14)
-    ws_tq.freeze_panes = "A2"
+    _auto_fit_columns(ws, min_width=14)
+    ws.freeze_panes = "A2"
 
-    # Save workbook to memory buffer
+
+def _populate_cabinet_summary_sheet(
+    ws,
+    allocations: Sequence[AllocatedSignal],
+    ciocs_per_cabinet: int = 4,
+    bps_per_cioc: int = 8,
+    charms_per_bp: int = 12,
+) -> None:
+    """Populate and format the Cabinet_Summary worksheet."""
+    cab_header_font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
+    cab_header_fill = PatternFill(start_color="1F497D", end_color="1F497D", fill_type="solid")
+    center_align = Alignment(horizontal="center", vertical="center")
+    right_align = Alignment(horizontal="right", vertical="center")
+
+    thin_border = Border(
+        left=Side(style="thin", color="D9D9D9"),
+        right=Side(style="thin", color="D9D9D9"),
+        top=Side(style="thin", color="D9D9D9"),
+        bottom=Side(style="thin", color="D9D9D9"),
+    )
+
+    for col_idx, (col_name, _) in enumerate(CABINET_SUMMARY_COLUMNS, start=1):
+        cell = ws.cell(row=1, column=col_idx, value=col_name)
+        cell.font = cab_header_font
+        cell.fill = cab_header_fill
+        cell.alignment = center_align
+
+    records, overall = compute_cabinet_summary(
+        allocations,
+        ciocs_per_cabinet=ciocs_per_cabinet,
+        bps_per_cioc=bps_per_cioc,
+        charms_per_bp=charms_per_bp,
+    )
+
+    current_row = 2
+    for record in records:
+        for col_idx, (_, attr_name) in enumerate(CABINET_SUMMARY_COLUMNS, start=1):
+            val = getattr(record, attr_name)
+            cell = ws.cell(row=current_row, column=col_idx, value=val)
+            cell.border = thin_border
+            if attr_name in ("cabinet_id", "ciocs_list", "utilization_str"):
+                cell.alignment = center_align
+                if attr_name == "cabinet_id":
+                    cell.font = Font(name="Calibri", size=10, bold=True)
+            else:
+                cell.alignment = right_align
+        current_row += 1
+
+    # Total summary row
+    tot_fill = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
+    tot_font = Font(name="Calibri", size=11, bold=True, color="002060")
+    tot_border = Border(
+        left=Side(style="thin", color="1F497D"),
+        right=Side(style="thin", color="1F497D"),
+        top=Side(style="thin", color="1F497D"),
+        bottom=Side(style="double", color="1F497D"),
+    )
+
+    tot_vals = {
+        "cabinet_id": "TOTAL",
+        "ciocs_list": f"{overall.total_ciocs} CIOCs Active",
+        "total_capacity": overall.total_capacity,
+        "active_loops": overall.total_active_loops,
+        "wired_spares": overall.total_wired_spares,
+        "total_allocated": overall.total_allocated,
+        "free_spares": overall.total_free_spares,
+        "utilization_str": overall.utilization_str,
+    }
+
+    for col_idx, (_, attr_name) in enumerate(CABINET_SUMMARY_COLUMNS, start=1):
+        cell = ws.cell(row=current_row, column=col_idx, value=tot_vals[attr_name])
+        cell.font = tot_font
+        cell.fill = tot_fill
+        cell.border = tot_border
+        cell.alignment = center_align if attr_name in ("cabinet_id", "ciocs_list", "utilization_str") else right_align
+
+    _auto_fit_columns(ws, min_width=14)
+    ws.freeze_panes = "A2"
+
+
+def _populate_rule_compliance_sheet(
+    ws,
+    allocations: Sequence[AllocatedSignal],
+    tqs: Optional[Sequence[TechnicalQuery]] = None,
+    charms_per_bp: int = 12,
+    bps_per_cioc: int = 8,
+) -> None:
+    """Populate and format the Rule_Compliance worksheet."""
+    rule_header_font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
+    rule_header_fill = PatternFill(start_color="1E4620", end_color="1E4620", fill_type="solid")
+    center_align = Alignment(horizontal="center", vertical="center")
+    left_align = Alignment(horizontal="left", vertical="center")
+
+    thin_border = Border(
+        left=Side(style="thin", color="D9D9D9"),
+        right=Side(style="thin", color="D9D9D9"),
+        top=Side(style="thin", color="D9D9D9"),
+        bottom=Side(style="thin", color="D9D9D9"),
+    )
+
+    for col_idx, (col_name, _) in enumerate(RULE_COMPLIANCE_COLUMNS, start=1):
+        cell = ws.cell(row=1, column=col_idx, value=col_name)
+        cell.font = rule_header_font
+        cell.fill = rule_header_fill
+        cell.alignment = center_align
+
+    items, summary = generate_rule_compliance_audit(
+        allocations,
+        tqs=tqs,
+        charms_per_bp=charms_per_bp,
+        bps_per_cioc=bps_per_cioc,
+    )
+
+    pass_fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
+    pass_font = Font(name="Calibri", size=10, bold=True, color="006100")
+    fail_fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
+    fail_font = Font(name="Calibri", size=10, bold=True, color="9C0006")
+
+    for row_idx, item in enumerate(items, start=2):
+        for col_idx, (_, attr_name) in enumerate(RULE_COMPLIANCE_COLUMNS, start=1):
+            val = getattr(item, attr_name)
+            cell = ws.cell(row=row_idx, column=col_idx, value=val)
+            cell.border = thin_border
+
+            if attr_name == "status":
+                cell.alignment = center_align
+                if val == "PASS":
+                    cell.fill = pass_fill
+                    cell.font = pass_font
+                else:
+                    cell.fill = fail_fill
+                    cell.font = fail_font
+            elif attr_name in ("rule_id", "category", "tested_count", "violations"):
+                cell.alignment = center_align
+                if attr_name == "rule_id":
+                    cell.font = Font(name="Calibri", size=10, bold=True)
+            else:
+                cell.alignment = left_align
+
+    _auto_fit_columns(ws, min_width=14)
+    ws.freeze_panes = "A2"
+
+
+def export_allocation_to_excel(
+    allocations: Sequence[AllocatedSignal],
+    output_path_or_buffer: Optional[Union[str, Path, BinaryIO]] = None,
+    tqs: Optional[Sequence[TechnicalQuery]] = None,
+    template_path_or_buffer: Optional[Union[str, Path, BinaryIO, bytes]] = None,
+    charms_per_bp: int = 12,
+    bps_per_cioc: int = 8,
+    ciocs_per_cabinet: int = 4,
+) -> bytes:
+    """Export allocated signals to a complete 5-tab deliverable Excel workbook (.xlsx).
+
+    Tabs generated:
+      1. Customer Template Sheet (injected) or Template_Overlay
+      2. Allocation (DeltaV hardware allocation matrix)
+      3. TQ_Log (Formal technical queries log)
+      4. Cabinet_Summary (Channel counts, wired spares, free spares, utilization %)
+      5. Rule_Compliance (Independent audit checklist with pass/fail counts)
+
+    Args:
+        allocations: Sequence of AllocatedSignal objects.
+        output_path_or_buffer: Optional file path or buffer to write to.
+        tqs: Optional sequence of TechnicalQuery records to write to TQ_Log.
+        template_path_or_buffer: Optional blank customer Excel template to overlay data onto.
+        charms_per_bp: CHARMs per baseplate (12).
+        bps_per_cioc: Baseplates per CIOC (8).
+        ciocs_per_cabinet: CIOCs per cabinet (4).
+
+    Returns:
+        Raw bytes of the generated 5-tab Excel workbook.
+    """
+    if template_path_or_buffer is not None:
+        wb = overlay_allocation_on_template(template_path_or_buffer, allocations)
+
+        # Tab 2: Allocation
+        if "Allocation" not in wb.sheetnames:
+            ws_alloc = wb.create_sheet(title="Allocation")
+        else:
+            ws_alloc = wb["Allocation"]
+        _populate_allocation_sheet(ws_alloc, allocations)
+
+        # Tab 3: TQ_Log
+        if "TQ_Log" not in wb.sheetnames:
+            ws_tq = wb.create_sheet(title="TQ_Log")
+        else:
+            ws_tq = wb["TQ_Log"]
+        _populate_tq_sheet(ws_tq, tqs)
+
+        # Tab 4: Cabinet_Summary
+        if "Cabinet_Summary" not in wb.sheetnames:
+            ws_cab = wb.create_sheet(title="Cabinet_Summary")
+        else:
+            ws_cab = wb["Cabinet_Summary"]
+        _populate_cabinet_summary_sheet(
+            ws_cab, allocations, ciocs_per_cabinet=ciocs_per_cabinet,
+            bps_per_cioc=bps_per_cioc, charms_per_bp=charms_per_bp
+        )
+
+        # Tab 5: Rule_Compliance
+        if "Rule_Compliance" not in wb.sheetnames:
+            ws_rule = wb.create_sheet(title="Rule_Compliance")
+        else:
+            ws_rule = wb["Rule_Compliance"]
+        _populate_rule_compliance_sheet(
+            ws_rule, allocations, tqs=tqs,
+            charms_per_bp=charms_per_bp, bps_per_cioc=bps_per_cioc
+        )
+
+    else:
+        wb = openpyxl.Workbook()
+
+        # Tab 1: Allocation
+        ws_alloc = wb.active
+        ws_alloc.title = "Allocation"
+        _populate_allocation_sheet(ws_alloc, allocations)
+
+        # Tab 2: TQ_Log
+        ws_tq = wb.create_sheet(title="TQ_Log")
+        _populate_tq_sheet(ws_tq, tqs)
+
+        # Tab 3: Cabinet_Summary
+        ws_cab = wb.create_sheet(title="Cabinet_Summary")
+        _populate_cabinet_summary_sheet(
+            ws_cab, allocations, ciocs_per_cabinet=ciocs_per_cabinet,
+            bps_per_cioc=bps_per_cioc, charms_per_bp=charms_per_bp
+        )
+
+        # Tab 4: Rule_Compliance
+        ws_rule = wb.create_sheet(title="Rule_Compliance")
+        _populate_rule_compliance_sheet(
+            ws_rule, allocations, tqs=tqs,
+            charms_per_bp=charms_per_bp, bps_per_cioc=bps_per_cioc
+        )
+
+        # Tab 5: Template_Overlay
+        ws_overlay = wb.create_sheet(title="Template_Overlay")
+        _populate_allocation_sheet(ws_overlay, allocations)
+
+    # Save workbook to buffer
     buf = io.BytesIO()
     wb.save(buf)
     excel_bytes = buf.getvalue()

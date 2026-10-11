@@ -35,3 +35,23 @@ def test_severity_values():
     assert Severity.CRITICAL.value == "Critical"
     assert Severity.WARNING.value == "Warning"
     assert Severity.INFO.value == "Info"
+
+
+def test_allocated_signal_cabinet_and_segregation():
+    from src.domain.models import AllocatedSignal, IOType
+
+    alloc = AllocatedSignal(
+        tag="10-FT-101",
+        io_type=IOType.AI,
+        cioc=5,
+        baseplate=2,
+        slot=3,
+        segregation="A",
+    )
+    assert alloc.cabinet_id == 2  # CIOC 5 belongs to Cabinet 2 (CIOC 1..4 = CAB-01, CIOC 5..8 = CAB-02)
+    assert alloc.cabinet_name == "CAB-02"
+    assert alloc.cioc_name == "CIOC-05"
+    assert alloc.baseplate_name == "BP-02"
+    assert alloc.slot_name == "SLOT-03"
+    assert alloc.segregation == "A"
+

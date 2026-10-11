@@ -1,8 +1,20 @@
 """Domain models for IO Signal Sudoku."""
 
 from enum import Enum
-from typing import Optional
-from pydantic import BaseModel, Field
+from typing import Any, Optional
+from pydantic import BaseModel, Field, model_validator, field_validator
+
+
+class SegregationPolicy(str, Enum):
+    CIOC = "CIOC"
+    CABINET = "CABINET"
+
+    @classmethod
+    def from_str(cls, val: str) -> "SegregationPolicy":
+        clean = str(val).strip().upper()
+        if "CAB" in clean:
+            return cls.CABINET
+        return cls.CIOC
 
 
 class IOType(str, Enum):
@@ -24,6 +36,18 @@ class Signal(BaseModel):
     description: Optional[str] = Field(default=None, description="Instrument loop engineering description")
     io_group: Optional[str] = Field(default=None, description="Functional or plant area unit group")
     segregation: Optional[str] = Field(default=None, description="Train redundancy segregation (A, B, or None)")
+
+    @field_validator("segregation", mode="before")
+    @classmethod
+    def validate_segregation(cls, v):
+        if v is None:
+            return None
+        v_str = str(v).strip().upper()
+        if not v_str:
+            return None
+        if v_str not in ("A", "B"):
+            raise ValueError(f"Segregation must be 'A', 'B', or None, got '{v}'")
+        return v_str
 
 
 class CableBlock(BaseModel):
@@ -60,6 +84,7 @@ class AllocatedSignal(BaseModel):
     baseplate: int = Field(..., ge=1, description="Physical baseplate number (1..N)")
     slot: int = Field(..., ge=1, le=12, description="Physical slot number on the baseplate (1..12)")
     cioc: int = Field(default=1, ge=1, description="Physical CIOC index (1..N)")
+    cabinet: int = Field(default=1, ge=1, description="Cabinet index (1..N)")
     cable_id: Optional[str] = None
     pair_no: Optional[int] = None
     description: Optional[str] = None
@@ -67,7 +92,40 @@ class AllocatedSignal(BaseModel):
     charm_part_no: Optional[str] = None
     terminal_block_type: Optional[str] = None
     terminal_block_part_no: Optional[str] = None
+    segregation: Optional[str] = Field(default=None, description="Redundancy segregation (A, B, or None)")
     is_spare: bool = Field(default=False, description="Flag indicating if slot is an unallocated wired spare")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _default_cabinet(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if "cabinet" not in data or data["cabinet"] is None:
+                cioc = data.get("cioc", 1)
+                data["cabinet"] = (cioc - 1) // 4 + 1
+        return data
+
+    @property
+    def cabinet_id(self) -> int:
+        if self.cabinet is not None:
+            return self.cabinet
+        return (self.cioc - 1) // 4 + 1
+
+    @property
+    def cabinet_name(self) -> str:
+        return f"CAB-{self.cabinet_id:02d}"
+
+    @property
+    def cioc_name(self) -> str:
+        return f"CIOC-{self.cioc:02d}"
+
+    @property
+    def baseplate_name(self) -> str:
+        return f"BP-{self.baseplate:02d}"
+
+    @property
+    def slot_name(self) -> str:
+        return f"SLOT-{self.slot:02d}"
+
 
 
 class Severity(str, Enum):

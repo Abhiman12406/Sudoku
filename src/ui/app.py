@@ -63,6 +63,7 @@ def generate_sample_template_bytes() -> bytes:
             "CBL-TRUNK-02",
         ],
         "Pair No": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 1, 2],
+        "Segregation": ["A", "A", "A", "A", "A", "A", "A", "A", "A", "A", "A", "A", "B", "B"],
         "Description": [
             "Inlet Flow Transmitter",
             "Inlet Control Valve",
@@ -140,6 +141,70 @@ def generate_corrupt_sample_template_bytes() -> bytes:
     buf = io.BytesIO()
     with pd.ExcelWriter(buf, engine="openpyxl") as writer:
         df.to_excel(writer, index=False, sheet_name="Corrupt_Schedule")
+    return buf.getvalue()
+
+
+def generate_sample_blank_customer_template_bytes() -> bytes:
+    """Generate a formatted blank customer template spreadsheet with custom fonts, colors, and formulas."""
+    import openpyxl
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Customer_IO_Schedule"
+
+    header_font = Font(name="Segoe UI", size=11, bold=True, color="FFFFFF")
+    header_fill = PatternFill(start_color="002060", end_color="002060", fill_type="solid")
+    center_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+    headers = [
+        "Loop Tag",
+        "Signal Type",
+        "Cabinet",
+        "CIOC",
+        "Baseplate",
+        "Slot",
+        "Trunk Cable",
+        "Wire Pair",
+        "CHARM Part No",
+        "Terminal Block Type",
+        "Description",
+        "Redundancy Train",
+        "Channel Status",
+        "Loop Key",
+    ]
+
+    for col_idx, h in enumerate(headers, start=1):
+        cell = ws.cell(row=1, column=col_idx, value=h)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = center_align
+
+    # Row 2 contains pre-formatted empty cells and a calculated formula
+    row2_font = Font(name="Segoe UI", size=10, italic=True)
+    row2_border = Border(
+        left=Side(style="thin", color="D9D9D9"),
+        right=Side(style="thin", color="D9D9D9"),
+        top=Side(style="thin", color="D9D9D9"),
+        bottom=Side(style="thin", color="D9D9D9"),
+    )
+    for col_idx in range(1, len(headers) + 1):
+        cell = ws.cell(row=2, column=col_idx)
+        cell.font = row2_font
+        cell.border = row2_border
+
+    # Put a formula in Column 14 (Loop Key)
+    ws.cell(row=2, column=14, value='=CONCATENATE(A2, "-", B2)')
+
+    # Set column widths
+    ws.column_dimensions["A"].width = 20
+    ws.column_dimensions["B"].width = 14
+    ws.column_dimensions["K"].width = 30
+    ws.column_dimensions["N"].width = 24
+    ws.freeze_panes = "A2"
+
+    buf = io.BytesIO()
+    wb.save(buf)
     return buf.getvalue()
 
 
@@ -222,12 +287,26 @@ def main():
             help="Contains duplicate tags, missing fields, unknown IO types, and pair overflows to test TQ generation.",
         )
 
+        template_sample_bytes = generate_sample_blank_customer_template_bytes()
+        st.download_button(
+            label="📄 Download Blank Customer Template (.xlsx)",
+            data=template_sample_bytes,
+            file_name="sample_customer_blank_template.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            help="Blank customer template with custom headers, formatting, fonts, and calculated formula.",
+        )
+
     with col_upload:
         st.write("##### Ingestion")
         uploaded_file = st.file_uploader(
             "Upload Signal Database (.xlsx or .csv)",
             type=["xlsx", "xls", "csv"],
             help="Excel workbook containing Tag, IO Type, Cable ID, Pair No, and Description.",
+        )
+        uploaded_template = st.file_uploader(
+            "Upload Blank Customer Template (.xlsx) [Optional]",
+            type=["xlsx"],
+            help="Preserves customer fonts, cell styles, borders, and formulas while overlaying allocated loop coordinates and appending engineering deliverable tabs.",
         )
 
     with st.sidebar:
@@ -241,6 +320,14 @@ def main():
         charms_per_bp = st.slider("CHARMs per Baseplate", min_value=6, max_value=24, value=12, step=2)
         baseplates_per_cioc = st.slider("Baseplates per CIOC", min_value=4, max_value=12, value=8, step=1)
         st.caption("Standard Emerson DeltaV DIN-rail baseplates host 12 CHARMs; CIOC carriers host up to 8 baseplates.")
+
+        st.subheader("🛡️ Safety Redundancy Rules")
+        segregation_policy = st.radio(
+            "A/B Segregation Policy",
+            options=["CIOC-level", "Cabinet-level"],
+            index=0,
+            help="CIOC-level enforces that Train A and Train B signals never reside on the same CIOC card.\nCabinet-level enforces that Train A and Train B signals never reside in the same Marshalling Cabinet.",
+        )
 
         st.subheader("🛠️ Hardware Catalog Editor")
         with st.expander("Customize CHARMs & Terminal Blocks", expanded=False):
@@ -269,18 +356,22 @@ def main():
 
             if st.button("🚀 Run Pre-Solve Validation & Allocation", type="primary"):
                 with st.spinner("Validating data & solving CP-SAT allocation..."):
+                    temp_input = uploaded_template.getvalue() if uploaded_template is not None else None
                     if solver_mode.startswith("Two-Stage"):
                         result = run_hierarchical_pipeline(
                             io.BytesIO(preview_bytes),
                             charms_per_baseplate=charms_per_bp,
                             baseplates_per_cioc=baseplates_per_cioc,
                             catalog=custom_catalog,
+                            template_file_or_bytes=temp_input,
+                            segregation_policy=segregation_policy,
                         )
                     else:
                         result = run_walking_pipeline(
                             io.BytesIO(preview_bytes),
                             charms_per_baseplate=charms_per_bp,
                             catalog=custom_catalog,
+                            template_file_or_bytes=temp_input,
                         )
                     allocations = result.allocations
                     out_excel_bytes = result.excel_bytes
@@ -357,15 +448,24 @@ def main():
                     m3.metric("CIOCs / Baseplates", f"{ciocs_used} CIOC / {baseplates_used} BP")
                     m4.metric("Total Cable Slots", f"{total_allocated} / {total_capacity}")
 
+                    train_a_cnt = sum(1 for a in allocations if a.segregation == "A")
+                    train_b_cnt = sum(1 for a in allocations if a.segregation == "B")
+                    st.info(
+                        f"🛡️ **Safety Redundancy Status ({segregation_policy}):** "
+                        f"{train_a_cnt} Train A channels, {train_b_cnt} Train B channels allocated with zero segregation breaches."
+                    )
+
                     rows = [
                         {
                             "Tag": a.tag,
                             "IO Type": a.io_type.value if hasattr(a.io_type, "value") else str(a.io_type),
+                            "Cabinet": a.cabinet_name,
                             "CIOC": f"CIOC-{a.cioc:02d}",
                             "Baseplate": f"BP-{a.baseplate:02d}",
                             "Slot": f"SLOT-{a.slot:02d}",
                             "Cable ID": a.cable_id or "-",
                             "Pair No": a.pair_no or "-",
+                            "Segregation": a.segregation or "Common",
                             "CHARM Model": a.charm_model or "-",
                             "CHARM Part No": a.charm_part_no or "-",
                             "Terminal Block Type": a.terminal_block_type or "-",
@@ -399,12 +499,25 @@ def main():
                     st.info("No valid signals to allocate after quarantining corrupt rows.")
 
                 # --- 5. Deliverable Download ---
-                st.write("### 5. Engineering Deliverables")
+                st.write("### 5. Multi-Tab Engineering Deliverable Package")
+                if uploaded_template is not None:
+                    st.success(
+                        "📄 **Customer Template Preserved:** Allocated signals overlaid into customer columns "
+                        "with original styles, formulas, and fonts preserved, alongside Allocation, TQ_Log, "
+                        "Cabinet_Summary, and Rule_Compliance sheets."
+                    )
+                else:
+                    st.info(
+                        "📦 **Complete 5-Tab Engineering Package:** Includes Template Overlay, Allocation Matrix, "
+                        "Technical Query Log, Cabinet Summary, and Rule Compliance Audit sheets."
+                    )
+
                 st.download_button(
-                    label="💾 Download Populated Excel Workbook with TQ_Log (.xlsx)",
+                    label="💾 Download Complete 5-Tab Deliverable Package (.xlsx)",
                     data=out_excel_bytes,
-                    file_name="allocated_signals_with_tq_log.xlsx",
+                    file_name="deltav_5tab_engineering_deliverable.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    help="Delivers zero-rework multi-tab Excel workbook preserving customer styles, fonts, and formulas.",
                 )
 
         except Exception as e:

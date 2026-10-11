@@ -156,3 +156,46 @@ def test_run_walking_pipeline_with_custom_catalog():
     assert df_out.loc[0, "CHARM Part No"] == "KL-SPECIAL-AI"
 
 
+def test_run_hierarchical_pipeline_with_customer_template():
+    import openpyxl
+    from src.pipeline import run_hierarchical_pipeline
+
+    # Create customer template
+    wb_temp = openpyxl.Workbook()
+    ws_temp = wb_temp.active
+    ws_temp.title = "Client_Marshalling_Schedule"
+    headers = ["Tag", "Signal Type", "Cabinet", "CIOC", "Baseplate", "Slot", "Cable", "Pair"]
+    for c, h in enumerate(headers, 1):
+        ws_temp.cell(row=1, column=c, value=h)
+    temp_buf = io.BytesIO()
+    wb_temp.save(temp_buf)
+    temp_bytes = temp_buf.getvalue()
+
+    df_in = pd.DataFrame({
+        "Tag": ["10-FT-01", "10-FT-02"],
+        "IO Type": ["AI", "AI"],
+        "Cable ID": ["CBL-12", "CBL-12"],
+        "Pair No": [1, 2],
+        "Description": ["Flow 1", "Flow 2"],
+    })
+    in_buf = io.BytesIO()
+    with pd.ExcelWriter(in_buf, engine="openpyxl") as writer:
+        df_in.to_excel(writer, index=False)
+    in_bytes = in_buf.getvalue()
+
+    result = run_hierarchical_pipeline(
+        in_bytes,
+        template_file_or_bytes=temp_bytes,
+    )
+    allocations, out_bytes = result
+    wb_out = openpyxl.load_workbook(io.BytesIO(out_bytes))
+
+    assert "Client_Marshalling_Schedule" in wb_out.sheetnames
+    assert "Allocation" in wb_out.sheetnames
+    assert "Cabinet_Summary" in wb_out.sheetnames
+    assert "Rule_Compliance" in wb_out.sheetnames
+    assert "TQ_Log" in wb_out.sheetnames
+    assert len(wb_out.sheetnames) == 5
+
+
+
