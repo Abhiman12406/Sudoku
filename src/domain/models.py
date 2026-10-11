@@ -95,6 +95,18 @@ class AllocatedSignal(BaseModel):
     segregation: Optional[str] = Field(default=None, description="Redundancy segregation (A, B, or None)")
     is_spare: bool = Field(default=False, description="Flag indicating if slot is an unallocated wired spare")
 
+    @field_validator("segregation", mode="before")
+    @classmethod
+    def validate_segregation(cls, v):
+        if v is None:
+            return None
+        v_str = str(v).strip().upper()
+        if not v_str:
+            return None
+        if v_str not in ("A", "B"):
+            raise ValueError(f"Segregation must be 'A', 'B', or None, got '{v}'")
+        return v_str
+
     @model_validator(mode="before")
     @classmethod
     def _default_cabinet(cls, data: Any) -> Any:

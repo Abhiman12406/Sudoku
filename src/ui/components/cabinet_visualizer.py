@@ -1,7 +1,7 @@
 """DIN-Rail Baseplate Rack Visualizer Component for Emerson DeltaV Marshalling."""
 
 from collections import defaultdict
-from typing import Any, Dict, List, Sequence
+from typing import Any, Dict, List, Sequence, Set, Tuple
 import streamlit as st
 
 from src.domain.models import AllocatedSignal
@@ -21,6 +21,31 @@ PALETTE = [
     "#00897B",  # Teal
     "#6D4C41",  # Brown
 ]
+
+
+def get_cioc_train_style(trains: Set[str]) -> Tuple[str, str, str, str]:
+    """Return (color, label, bg_style, badge_html) for a set of segregation trains."""
+    if "A" in trains and "B" in trains:
+        color = "#E53935"
+        label = "🚨 TRAIN MIXED"
+        bg_style = "background: linear-gradient(90deg, #2D1418 0%, #1E232E 100%);"
+        badge = "<span style='background:#E53935;color:#FFFFFF;padding:3px 10px;border-radius:4px;font-size:11px;font-weight:800;'>🚨 TRAIN MIXED (BREACH)</span>"
+    elif "A" in trains:
+        color = "#1E88E5"
+        label = "🛡️ TRAIN A (BLUE)"
+        bg_style = "background: linear-gradient(90deg, #10243E 0%, #1E232E 100%);"
+        badge = "<span style='background:#1E88E5;color:#FFFFFF;padding:3px 10px;border-radius:4px;font-size:11px;font-weight:800;'>🛡️ TRAIN A (BLUE)</span>"
+    elif "B" in trains:
+        color = "#FFA000"
+        label = "🛡️ TRAIN B (AMBER)"
+        bg_style = "background: linear-gradient(90deg, #332612 0%, #1E232E 100%);"
+        badge = "<span style='background:#FFA000;color:#1A1A1A;padding:3px 10px;border-radius:4px;font-size:11px;font-weight:800;'>🛡️ TRAIN B (AMBER)</span>"
+    else:
+        color = "#546E7A"
+        label = "COMMON"
+        bg_style = "background: #1E232E;"
+        badge = "<span style='background:#37474F;color:#CFD8DC;padding:3px 8px;border-radius:4px;font-size:11px;font-weight:600;'>COMMON / UNASSIGNED</span>"
+    return color, label, bg_style, badge
 
 
 def get_cable_color_map(allocations: Sequence[AllocatedSignal]) -> Dict[str, str]:
@@ -235,22 +260,7 @@ def render_din_rail_html(
         trains = {a.segregation for a in cioc_allocs if a.segregation}
         cab_id = next((a.cabinet for a in cioc_allocs if a.cabinet), (cioc_id - 1) // 4 + 1)
 
-        if "A" in trains and "B" in trains:
-            border_color = "#E53935"
-            bg_style = "background: linear-gradient(90deg, #2D1418 0%, #1E232E 100%);"
-            badge = "<span style='background:#E53935;color:#FFFFFF;padding:3px 10px;border-radius:4px;font-size:11px;font-weight:800;'>🚨 TRAIN MIXED (BREACH)</span>"
-        elif "A" in trains:
-            border_color = "#1E88E5"
-            bg_style = "background: linear-gradient(90deg, #10243E 0%, #1E232E 100%);"
-            badge = "<span style='background:#1E88E5;color:#FFFFFF;padding:3px 10px;border-radius:4px;font-size:11px;font-weight:800;'>🛡️ TRAIN A (BLUE)</span>"
-        elif "B" in trains:
-            border_color = "#FFA000"
-            bg_style = "background: linear-gradient(90deg, #332612 0%, #1E232E 100%);"
-            badge = "<span style='background:#FFA000;color:#1A1A1A;padding:3px 10px;border-radius:4px;font-size:11px;font-weight:800;'>🛡️ TRAIN B (AMBER)</span>"
-        else:
-            border_color = "#546E7A"
-            bg_style = "background: #1E232E;"
-            badge = "<span style='background:#37474F;color:#CFD8DC;padding:3px 8px;border-radius:4px;font-size:11px;font-weight:600;'>COMMON / UNASSIGNED</span>"
+        border_color, _, bg_style, badge = get_cioc_train_style(trains)
 
         html_parts.append(
             f"<div class='cioc-banner' style='border-left: 5px solid {border_color}; {bg_style} display:flex; justify-content:space-between; align-items:center;'>"
@@ -369,21 +379,14 @@ def render_streamlit_rack(
         c_allocs = [a for a in allocations if a.cioc == c]
         c_trains = {a.segregation for a in c_allocs if a.segregation}
         cab_id = next((a.cabinet for a in c_allocs if a.cabinet), (c - 1) // 4 + 1)
+        color, label, _, _ = get_cioc_train_style(c_trains)
         if "A" in c_trains and "B" in c_trains:
-            color = "#E53935"
-            label = "🚨 TRAIN MIXED"
             train_desc = "Segregation breach"
         elif "A" in c_trains:
-            color = "#1E88E5"
-            label = "🛡️ TRAIN A (BLUE)"
             train_desc = f"{sum(1 for a in c_allocs if a.segregation == 'A')} Train A channels"
         elif "B" in c_trains:
-            color = "#FFA000"
-            label = "🛡️ TRAIN B (AMBER)"
             train_desc = f"{sum(1 for a in c_allocs if a.segregation == 'B')} Train B channels"
         else:
-            color = "#546E7A"
-            label = "COMMON"
             train_desc = "Unassigned channels"
 
         with col:

@@ -74,6 +74,12 @@ def run_walking_pipeline(
             charms_per_baseplate=charms_per_baseplate,
             catalog=catalog,
         )
+        valid, errors = verify_allocation_invariants(
+            allocations,
+            charms_per_baseplate=charms_per_baseplate,
+        )
+        if not valid:
+            raise RuntimeError(f"Allocation violated physical constraints: {'; '.join(errors)}")
     else:
         allocations = []
 
@@ -162,6 +168,7 @@ def run_hierarchical_pipeline(
         charms_per_bp=charms_per_baseplate,
         bps_per_cioc=baseplates_per_cioc,
         ciocs_per_cabinet=ciocs_per_cabinet,
+        segregation_policy=segregation_policy,
     )
 
     if return_tqs:

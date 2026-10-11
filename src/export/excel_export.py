@@ -7,7 +7,7 @@ import openpyxl
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
-from src.domain.models import AllocatedSignal, TechnicalQuery
+from src.domain.models import AllocatedSignal, SegregationPolicy, TechnicalQuery
 from src.export.audit_report import generate_rule_compliance_audit
 from src.export.metrics import compute_cabinet_summary
 from src.export.template_overlay import overlay_allocation_on_template
@@ -269,6 +269,8 @@ def _populate_rule_compliance_sheet(
     tqs: Optional[Sequence[TechnicalQuery]] = None,
     charms_per_bp: int = 12,
     bps_per_cioc: int = 8,
+    segregation_policy: Union[str, SegregationPolicy] = SegregationPolicy.CIOC,
+    ciocs_per_cabinet: int = 4,
 ) -> None:
     """Populate and format the Rule_Compliance worksheet."""
     rule_header_font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
@@ -294,6 +296,8 @@ def _populate_rule_compliance_sheet(
         tqs=tqs,
         charms_per_bp=charms_per_bp,
         bps_per_cioc=bps_per_cioc,
+        segregation_policy=segregation_policy,
+        ciocs_per_cabinet=ciocs_per_cabinet,
     )
 
     pass_fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
@@ -334,6 +338,7 @@ def export_allocation_to_excel(
     charms_per_bp: int = 12,
     bps_per_cioc: int = 8,
     ciocs_per_cabinet: int = 4,
+    segregation_policy: Union[str, SegregationPolicy] = SegregationPolicy.CIOC,
 ) -> bytes:
     """Export allocated signals to a complete 5-tab deliverable Excel workbook (.xlsx).
 
@@ -352,6 +357,7 @@ def export_allocation_to_excel(
         charms_per_bp: CHARMs per baseplate (12).
         bps_per_cioc: Baseplates per CIOC (8).
         ciocs_per_cabinet: CIOCs per cabinet (4).
+        segregation_policy: "CIOC" or "CABINET" segregation verification policy.
 
     Returns:
         Raw bytes of the generated 5-tab Excel workbook.
@@ -390,7 +396,8 @@ def export_allocation_to_excel(
             ws_rule = wb["Rule_Compliance"]
         _populate_rule_compliance_sheet(
             ws_rule, allocations, tqs=tqs,
-            charms_per_bp=charms_per_bp, bps_per_cioc=bps_per_cioc
+            charms_per_bp=charms_per_bp, bps_per_cioc=bps_per_cioc,
+            segregation_policy=segregation_policy, ciocs_per_cabinet=ciocs_per_cabinet
         )
 
     else:
@@ -416,7 +423,8 @@ def export_allocation_to_excel(
         ws_rule = wb.create_sheet(title="Rule_Compliance")
         _populate_rule_compliance_sheet(
             ws_rule, allocations, tqs=tqs,
-            charms_per_bp=charms_per_bp, bps_per_cioc=bps_per_cioc
+            charms_per_bp=charms_per_bp, bps_per_cioc=bps_per_cioc,
+            segregation_policy=segregation_policy, ciocs_per_cabinet=ciocs_per_cabinet
         )
 
         # Tab 5: Template_Overlay

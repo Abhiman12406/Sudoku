@@ -341,6 +341,43 @@ def test_visualizer_renders_train_a_and_train_b_status_banners():
     assert "TRAIN B" in html
 
 
+def test_allocated_signal_segregation_validation():
+    # Valid values
+    s_a = AllocatedSignal(tag="FT-101", io_type=IOType.AI, cioc=1, baseplate=1, slot=1, segregation=" a ")
+    assert s_a.segregation == "A"
+
+    s_none = AllocatedSignal(tag="FT-102", io_type=IOType.AI, cioc=1, baseplate=1, slot=2, segregation="")
+    assert s_none.segregation is None
+
+    # Invalid value raises ValueError
+    with pytest.raises(ValueError, match="Segregation must be 'A', 'B', or None"):
+        AllocatedSignal(tag="FT-103", io_type=IOType.AI, cioc=1, baseplate=1, slot=3, segregation="C")
+
+
+def test_audit_report_rule_safe_01_evaluates_cabinet_policy():
+    from src.export.audit_report import generate_rule_compliance_audit
+
+    # Train A in CIOC 1, Train B in CIOC 2 (both in Cabinet 1)
+    allocs = [
+        AllocatedSignal(tag="FT-A", io_type=IOType.AI, cioc=1, baseplate=1, slot=1, cabinet=1, segregation="A"),
+        AllocatedSignal(tag="FT-B", io_type=IOType.AI, cioc=2, baseplate=1, slot=1, cabinet=1, segregation="B"),
+    ]
+
+    # Under CIOC policy: PASS (different CIOCs)
+    items_cioc, _ = generate_rule_compliance_audit(allocs, segregation_policy=SegregationPolicy.CIOC)
+    rule_cioc = next(it for it in items_cioc if it.rule_id == "RULE-SAFE-01")
+    assert rule_cioc.status == "PASS"
+    assert rule_cioc.violations == 0
+
+    # Under CABINET policy: FAIL (same Cabinet 1)
+    items_cab, _ = generate_rule_compliance_audit(allocs, segregation_policy=SegregationPolicy.CABINET)
+    rule_cab = next(it for it in items_cab if it.rule_id == "RULE-SAFE-01")
+    assert rule_cab.status == "FAIL"
+    assert rule_cab.violations == 1
+    assert "Cabinet" in rule_cab.requirement
+
+
+
 
 
 

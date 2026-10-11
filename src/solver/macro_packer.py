@@ -100,12 +100,24 @@ def solve_macro_packing(
             model.Add(u[c] >= y[k, c])
 
     # Constraint 3: Linearized Indicator Redundancy Cuts at CIOC level
+    a_blocks = [k for k in range(num_blocks) if cable_blocks[k].segregation == "A"]
+    b_blocks = [k for k in range(num_blocks) if cable_blocks[k].segregation == "B"]
+
     for c in range(1, max_ciocs + 1):
-        for k in range(num_blocks):
-            if cable_blocks[k].segregation == "A":
-                model.Add(u_a[c] >= y[k, c])
-            elif cable_blocks[k].segregation == "B":
-                model.Add(u_b[c] >= y[k, c])
+        for k in a_blocks:
+            model.Add(u_a[c] >= y[k, c])
+        if a_blocks:
+            model.Add(u_a[c] <= sum(y[k, c] for k in a_blocks))
+        else:
+            model.Add(u_a[c] == 0)
+
+        for k in b_blocks:
+            model.Add(u_b[c] >= y[k, c])
+        if b_blocks:
+            model.Add(u_b[c] <= sum(y[k, c] for k in b_blocks))
+        else:
+            model.Add(u_b[c] == 0)
+
         # Train A and Train B never share the same CIOC: U_c^A + U_c^B <= 1
         model.Add(u_a[c] + u_b[c] <= 1)
 
@@ -128,6 +140,15 @@ def solve_macro_packing(
             model.Add(u_cab[cab] >= u[c])
             model.Add(u_cab_a[cab] >= u_a[c])
             model.Add(u_cab_b[cab] >= u_b[c])
+
+        if cab_ciocs:
+            model.Add(u_cab_a[cab] <= sum(u_a[c] for c in cab_ciocs))
+            model.Add(u_cab_b[cab] <= sum(u_b[c] for c in cab_ciocs))
+            model.Add(u_cab[cab] <= sum(u[c] for c in cab_ciocs))
+        else:
+            model.Add(u_cab_a[cab] == 0)
+            model.Add(u_cab_b[cab] == 0)
+            model.Add(u_cab[cab] == 0)
 
         if policy == SegregationPolicy.CABINET and has_segregation:
             # Linear indicator cut at Cabinet level: U_cab^A + U_cab^B <= 1

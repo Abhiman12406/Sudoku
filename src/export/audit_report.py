@@ -2,9 +2,9 @@
 
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Sequence, Set, Tuple
+from typing import Dict, List, Optional, Sequence, Set, Tuple, Union
 
-from src.domain.models import AllocatedSignal, TechnicalQuery
+from src.domain.models import AllocatedSignal, SegregationPolicy, TechnicalQuery
 from src.solver.audit import verify_allocation_invariants
 
 
@@ -34,6 +34,8 @@ def generate_rule_compliance_audit(
     tqs: Optional[Sequence[TechnicalQuery]] = None,
     charms_per_bp: int = 12,
     bps_per_cioc: int = 8,
+    segregation_policy: Union[str, SegregationPolicy] = SegregationPolicy.CIOC,
+    ciocs_per_cabinet: int = 4,
 ) -> Tuple[List[RuleComplianceItem], RuleComplianceSummary]:
     """Generate independent audit checklist evaluating all hard physical and safety rules.
 
@@ -42,6 +44,8 @@ def generate_rule_compliance_audit(
         tqs: Optional sequence of generated TechnicalQuery records.
         charms_per_bp: Slots per baseplate (12).
         bps_per_cioc: Baseplates per CIOC (8).
+        segregation_policy: "CIOC" or "CABINET" segregation verification policy.
+        ciocs_per_cabinet: CIOCs per cabinet (default: 4).
 
     Returns:
         Tuple of (list_of_rule_items, summary).
@@ -191,22 +195,47 @@ def generate_rule_compliance_audit(
     )
 
     # 6. Safety-Critical A/B Redundancy Segregation
+    policy_enum = (
+        SegregationPolicy.from_str(segregation_policy)
+        if isinstance(segregation_policy, str)
+        else segregation_policy
+    )
     cioc_trains: Dict[int, Set[str]] = defaultdict(set)
     for a in allocations:
         if a.segregation and a.segregation.strip().upper() in ("A", "B"):
             cioc_trains[a.cioc].add(a.segregation.strip().upper())
 
-    segregation_breaches = sum(1 for c, trains in cioc_trains.items() if len(trains) > 1)
+    cioc_breaches = sum(1 for c, trains in cioc_trains.items() if len(trains) > 1)
+    total_breaches = cioc_breaches
+    tested_count = len(cioc_trains) if cioc_trains else 1
+    req_text = "Train A and Train B signals must never reside on the same CIOC carrier"
+
+    if policy_enum == SegregationPolicy.CABINET:
+        cab_trains: Dict[int, Set[str]] = defaultdict(set)
+        for a in allocations:
+            if a.segregation and a.segregation.strip().upper() in ("A", "B"):
+                cab_id = a.cabinet if a.cabinet else (a.cioc - 1) // ciocs_per_cabinet + 1
+                cab_trains[cab_id].add(a.segregation.strip().upper())
+        cab_breaches = sum(1 for cab, trains in cab_trains.items() if len(trains) > 1)
+        total_breaches += cab_breaches
+        tested_count = (len(cioc_trains) + len(cab_trains)) if (cioc_trains or cab_trains) else 1
+        req_text = "Train A and Train B signals must never reside in the same CIOC carrier or Cabinet"
+
+    remarks = (
+        "Zero cross-train segregation breaches detected."
+        if total_breaches == 0
+        else f"{total_breaches} segregation breaches detected!"
+    )
     items.append(
         RuleComplianceItem(
             rule_id="RULE-SAFE-01",
             rule_name="A/B Redundancy Segregation",
             category="Plant Safety",
-            requirement="Train A and Train B signals must never reside on the same CIOC carrier",
-            tested_count=len(cioc_trains) if cioc_trains else 1,
-            violations=segregation_breaches,
-            status="PASS" if segregation_breaches == 0 else "FAIL",
-            remarks="Zero cross-train segregation breaches detected." if segregation_breaches == 0 else f"{segregation_breaches} CIOCs contain mixed trains!",
+            requirement=req_text,
+            tested_count=tested_count,
+            violations=total_breaches,
+            status="PASS" if total_breaches == 0 else "FAIL",
+            remarks=remarks,
         )
     )
 

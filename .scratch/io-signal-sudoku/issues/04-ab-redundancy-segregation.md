@@ -4,7 +4,7 @@
 
 **Blocked by:** 03: Two-Stage Hierarchical Packing & Cable Contiguity (Trunk Cables)
 
-**Status:** ready-for-human
+**Status:** resolved
 
 - [x] Support signal segregation attributes ('A', 'B', or None).
 - [x] Add linear indicator cuts ($U_c^A + U_c^B \le 1$) in Stage 1 CP-SAT solver ensuring mutual exclusion at CIOC level.
