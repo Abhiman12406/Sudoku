@@ -17,6 +17,106 @@ class MacroPackingResult:
     cioc_trains: Dict[int, Optional[str]] = field(default_factory=dict)
 
 
+def _solve_fast_macro_packing(
+    cable_blocks: Sequence[CableBlock],
+    slots_per_cioc: int = 96,
+    spare_margin: float = 0.0,
+    segregation_policy: SegregationPolicy = SegregationPolicy.CIOC,
+    ciocs_per_cabinet: int = 4,
+) -> MacroPackingResult:
+    """High-performance partitioned macro bin-packer for large-scale cable sets (1,000+ cables)."""
+    eff_capacity = int(math.floor(slots_per_cioc * (1.0 - spare_margin)))
+
+    # Sort blocks within each train by io_group, -pair_count, cable_id
+    blocks_a = sorted(
+        [b for b in cable_blocks if b.segregation == "A"],
+        key=lambda b: (b.io_group or "", -b.pair_count, b.cable_id),
+    )
+    blocks_b = sorted(
+        [b for b in cable_blocks if b.segregation == "B"],
+        key=lambda b: (b.io_group or "", -b.pair_count, b.cable_id),
+    )
+    blocks_none = sorted(
+        [b for b in cable_blocks if b.segregation is None],
+        key=lambda b: (b.io_group or "", -b.pair_count, b.cable_id),
+    )
+
+    cioc_assignments: Dict[int, List[CableBlock]] = {}
+    total_slots_used: Dict[int, int] = {}
+    cioc_cursor = 1
+
+    def assign_to_bins(group_blocks: List[CableBlock], allowed_existing_bins: List[int]) -> None:
+        nonlocal cioc_cursor
+        for b in group_blocks:
+            placed = False
+            for c in allowed_existing_bins:
+                if c in total_slots_used and total_slots_used[c] + b.pair_count <= eff_capacity:
+                    cioc_assignments[c].append(b)
+                    total_slots_used[c] += b.pair_count
+                    placed = True
+                    break
+            if not placed:
+                while cioc_cursor in total_slots_used and total_slots_used[cioc_cursor] + b.pair_count > eff_capacity:
+                    cioc_cursor += 1
+                c = cioc_cursor
+                if c not in cioc_assignments:
+                    cioc_assignments[c] = []
+                    total_slots_used[c] = 0
+                cioc_assignments[c].append(b)
+                total_slots_used[c] += b.pair_count
+                allowed_existing_bins.append(c)
+
+    ciocs_a: List[int] = []
+    if blocks_a:
+        assign_to_bins(blocks_a, ciocs_a)
+        cioc_cursor = max(cioc_assignments.keys(), default=0) + 1
+
+    # Cabinet alignment if policy is CABINET and there are Train B blocks
+    if segregation_policy == SegregationPolicy.CABINET and blocks_b and blocks_a:
+        rem = (cioc_cursor - 1) % ciocs_per_cabinet
+        if rem != 0:
+            cioc_cursor += ciocs_per_cabinet - rem
+
+    ciocs_b: List[int] = []
+    if blocks_b:
+        assign_to_bins(blocks_b, ciocs_b)
+        cioc_cursor = max(cioc_assignments.keys(), default=0) + 1
+
+    # Cabinet alignment if policy is CABINET and there are Neutral blocks
+    if segregation_policy == SegregationPolicy.CABINET and blocks_none and (blocks_a or blocks_b):
+        rem = (cioc_cursor - 1) % ciocs_per_cabinet
+        if rem != 0:
+            cioc_cursor += ciocs_per_cabinet - rem
+
+    ciocs_none: List[int] = []
+    if blocks_none:
+        assign_to_bins(blocks_none, ciocs_none)
+
+    # Sort blocks within each CIOC deterministically by cable_id
+    for c in cioc_assignments:
+        cioc_assignments[c].sort(key=lambda b: b.cable_id)
+
+    # Determine train metadata for each active CIOC
+    cioc_trains: Dict[int, Optional[str]] = {}
+    for c, blocks in cioc_assignments.items():
+        trains_in_c = {b.segregation for b in blocks if b.segregation}
+        if "A" in trains_in_c and "B" in trains_in_c:
+            cioc_trains[c] = "MIXED"
+        elif "A" in trains_in_c:
+            cioc_trains[c] = "A"
+        elif "B" in trains_in_c:
+            cioc_trains[c] = "B"
+        else:
+            cioc_trains[c] = None
+
+    return MacroPackingResult(
+        cioc_assignments=cioc_assignments,
+        num_ciocs=len(cioc_assignments),
+        total_slots_used=total_slots_used,
+        cioc_trains=cioc_trains,
+    )
+
+
 def solve_macro_packing(
     cable_blocks: Sequence[CableBlock],
     slots_per_cioc: int = 96,
@@ -63,6 +163,15 @@ def solve_macro_packing(
     has_segregation = has_train_a and has_train_b
 
     num_blocks = len(cable_blocks)
+
+    if num_blocks > 25:
+        return _solve_fast_macro_packing(
+            cable_blocks=cable_blocks,
+            slots_per_cioc=slots_per_cioc,
+            spare_margin=spare_margin,
+            segregation_policy=policy,
+            ciocs_per_cabinet=ciocs_per_cabinet,
+        )
 
     if policy == SegregationPolicy.CABINET and has_segregation:
         num_cabs = max(2, num_blocks)

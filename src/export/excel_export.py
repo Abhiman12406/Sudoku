@@ -65,22 +65,23 @@ RULE_COMPLIANCE_COLUMNS = [
 
 
 def _auto_fit_columns(ws, min_width: int = 12) -> None:
-    """Auto-fit column widths based on maximum string length in each column."""
-    for col in ws.columns:
+    """Auto-fit column widths based on maximum string length sampled across up to 100 rows."""
+    max_rows = min(ws.max_row, 100)
+    for col_idx in range(1, ws.max_column + 1):
+        col_letter = get_column_letter(col_idx)
         max_len = 0
-        col_letter = get_column_letter(col[0].column)
-        for cell in col:
-            val_str = str(cell.value or "")
+        for r in range(1, max_rows + 1):
+            val_str = str(ws.cell(row=r, column=col_idx).value or "")
             if len(val_str) > max_len:
                 max_len = len(val_str)
         ws.column_dimensions[col_letter].width = max(max_len + 4, min_width)
 
 
 def _populate_allocation_sheet(ws, allocations: Sequence[AllocatedSignal]) -> None:
-    """Populate and format the Allocation worksheet."""
+    """Populate and format the Allocation worksheet with high-throughput batching."""
     alloc_header_font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
     alloc_header_fill = PatternFill(start_color="1F497D", end_color="1F497D", fill_type="solid")
-    center_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    center_align = Alignment(horizontal="center", vertical="center")
     left_align = Alignment(horizontal="left", vertical="center")
 
     thin_border = Border(
@@ -101,31 +102,53 @@ def _populate_allocation_sheet(ws, allocations: Sequence[AllocatedSignal]) -> No
     train_a_font = Font(name="Calibri", size=10, color="002060", bold=True)
     train_b_font = Font(name="Calibri", size=10, color="B25900", bold=True)
 
+    center_cols = {
+        col_idx
+        for col_idx, (_, attr_name) in enumerate(ALLOCATION_COLUMNS, start=1)
+        if attr_name in ("cioc", "baseplate", "slot", "pair_no", "io_type", "segregation", "cabinet_name", "status")
+    }
+    seg_col_idx = next(col_idx for col_idx, (_, attr_name) in enumerate(ALLOCATION_COLUMNS, start=1) if attr_name == "segregation")
+    status_col_idx = next(col_idx for col_idx, (_, attr_name) in enumerate(ALLOCATION_COLUMNS, start=1) if attr_name == "status")
+
+    fast_mode = len(allocations) > 2000
+
     for row_idx, alloc in enumerate(allocations, start=2):
+        row_vals = []
+        is_spare = alloc.is_spare
+        seg = alloc.segregation
         for col_idx, (_, attr_name) in enumerate(ALLOCATION_COLUMNS, start=1):
             if attr_name == "status":
-                val = "WIRED SPARE" if alloc.is_spare else "Active Loop"
+                val = "WIRED SPARE" if is_spare else "Active Loop"
             else:
                 val = getattr(alloc, attr_name)
                 if hasattr(val, "value"):
                     val = val.value
+            row_vals.append(val)
+        ws.append(row_vals)
 
-            cell = ws.cell(row=row_idx, column=col_idx, value=val)
-            cell.border = thin_border
-
-            if alloc.is_spare:
-                cell.font = spare_font
-                cell.fill = spare_fill
-            elif attr_name == "segregation":
-                if val == "A":
-                    cell.font = train_a_font
-                elif val == "B":
-                    cell.font = train_b_font
-
-            if attr_name in ("cioc", "baseplate", "slot", "pair_no", "io_type", "segregation", "cabinet_name", "status"):
-                cell.alignment = Alignment(horizontal="center", vertical="center")
-            else:
-                cell.alignment = left_align
+        if fast_mode:
+            # High-performance selective highlight styling
+            if is_spare:
+                cell_status = ws.cell(row=row_idx, column=status_col_idx)
+                cell_status.font = spare_font
+                cell_status.fill = spare_fill
+            if seg in ("A", "B"):
+                cell_seg = ws.cell(row=row_idx, column=seg_col_idx)
+                cell_seg.font = train_a_font if seg == "A" else train_b_font
+        else:
+            # Full styling for standard batches
+            for col_idx in range(1, len(ALLOCATION_COLUMNS) + 1):
+                cell = ws.cell(row=row_idx, column=col_idx)
+                cell.border = thin_border
+                if is_spare:
+                    cell.font = spare_font
+                    cell.fill = spare_fill
+                elif col_idx == seg_col_idx:
+                    if seg == "A":
+                        cell.font = train_a_font
+                    elif seg == "B":
+                        cell.font = train_b_font
+                cell.alignment = center_align if col_idx in center_cols else left_align
 
     _auto_fit_columns(ws, min_width=12)
     ws.freeze_panes = "A2"

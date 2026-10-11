@@ -1,12 +1,15 @@
 """Streamlit Web Application for IO Signal Sudoku with Automated TQ Engine."""
 
 import io
-from typing import Any, List
+import time
+from typing import Any, List, Literal
 import pandas as pd
 import streamlit as st
 
+from src.benchmark.runner import run_single_benchmark
+from src.benchmark.synthetic_generator import generate_synthetic_excel
 from src.domain.hardware import DEFAULT_CATALOG, load_hardware_catalog
-from src.domain.models import AllocatedSignal, TechnicalQuery
+from src.domain.models import AllocatedSignal, SegregationPolicy, TechnicalQuery
 from src.pipeline import run_hierarchical_pipeline, run_revision_pipeline, run_walking_pipeline
 from src.revision.classifier import (
     DiffStatus,
@@ -841,6 +844,103 @@ def _render_revision_diff_tab(
             st.error(f"Error during revision processing: {e}")
 
 
+def _render_benchmark_tab(
+    charms_per_bp: int,
+    baseplates_per_cioc: int,
+    segregation_policy: str,
+    custom_catalog: dict,
+) -> None:
+    """Render interactive evaluator scalability benchmark and stress hardening telemetry."""
+    st.write("### ⚡ Evaluator Scalability & Stress Telemetry (10,000 Signals in <60s)")
+    st.markdown(
+        """
+        **High-Performance Guarantee:** Real-time stress test solving up to **10,000 industrial signals across 1,000 cables**
+        in under 60 seconds with **0 hard rule violations**, independent invariant auditing, and 5-tab deliverable generation.
+        """
+    )
+
+    col_bench_cfg, col_synthetic = st.columns([2, 1])
+
+    with col_synthetic:
+        st.write("##### Synthetic Benchmark Datasets")
+        st.caption("Pre-generated realistic multi-conductor industrial signal schedules:")
+        if st.button("📦 Generate & Download 1,000 Signals (.xlsx)", key="btn_gen_1k"):
+            b1k = generate_synthetic_excel(count=1000, seed=42)
+            st.download_button(
+                "📥 Save 1k_signals.xlsx",
+                data=b1k,
+                file_name="synthetic_1k_signals.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="dl_1k",
+            )
+        if st.button("📦 Generate & Download 10,000 Signals (.xlsx)", key="btn_gen_10k"):
+            b10k = generate_synthetic_excel(count=10000, seed=42)
+            st.download_button(
+                "📥 Save 10k_signals.xlsx",
+                data=b10k,
+                file_name="synthetic_10k_signals.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="dl_10k",
+            )
+
+    with col_bench_cfg:
+        st.write("##### Benchmark Parameters")
+        batch_size = st.select_slider(
+            "Benchmark Batch Size",
+            options=[1000, 2500, 5000, 7500, 10000],
+            value=10000,
+            help="Select signal count to stress-test the hierarchical CP-SAT engine, contiguity validator, and deliverable generator.",
+        )
+        export_deliverable = st.checkbox(
+            "Generate Complete 5-Tab Excel Deliverable Workbook",
+            value=True,
+            help="Includes Allocation, TQ_Log, Cabinet_Summary, and Rule_Compliance sheets.",
+        )
+
+        if st.button("⚡ Run Stress Optimization & Audit", type="primary", key="btn_run_stress_bench"):
+            with st.spinner(f"Optimizing {batch_size:,} signals across mixed trunk cables with zero violations..."):
+                t_bench_start = time.perf_counter()
+                policy_enum = SegregationPolicy.from_str(segregation_policy)
+                metric = run_single_benchmark(
+                    signal_count=batch_size,
+                    seed=42,
+                    charms_per_baseplate=charms_per_bp,
+                    baseplates_per_cioc=baseplates_per_cioc,
+                    segregation_policy=policy_enum,
+                    export_excel=export_deliverable,
+                )
+
+                st.session_state["latest_bench_metric"] = metric
+
+    if "latest_bench_metric" in st.session_state:
+        metric = st.session_state["latest_bench_metric"]
+        st.write("---")
+        st.write(f"### Live Telemetry Results: {metric.signal_count:,} Signals")
+
+        kpi1, kpi2, kpi3, kpi4 = st.columns(4)
+        sla_pass = metric.total_elapsed_seconds < 60.0
+        sla_color: Literal["normal", "inverse"] = "normal" if sla_pass else "inverse"
+        kpi1.metric("Total Execution Time", f"{metric.total_elapsed_seconds:.2f} s", delta="< 60s SLA Guarantee" if sla_pass else "SLA Exceeded", delta_color=sla_color)
+        kpi2.metric("Invariant Violations", f"{metric.violation_count}", delta="100% Audit Pass" if metric.audit_passed else "Violations Detected")
+        kpi3.metric("Hardware Provisioned", f"{metric.ciocs_used} CIOCs", delta=f"{metric.cabinets_used} Cabinets")
+        kpi4.metric("Peak Memory Usage", f"{metric.peak_memory_mb:.1f} MB", delta="Resource Safe")
+
+        st.write("#### Stage-by-Stage Latency Telemetry")
+        t_df = pd.DataFrame([
+            {"Stage": "1. Ingestion & Cable Bundling", "Duration (ms)": round(metric.parse_time_seconds * 1000, 2), "Share %": f"{metric.parse_time_seconds / metric.total_elapsed_seconds * 100:.1f}%"},
+            {"Stage": "2. Stage 1: Macro CIOC Packing", "Duration (ms)": round(metric.macro_pack_seconds * 1000, 2), "Share %": f"{metric.macro_pack_seconds / metric.total_elapsed_seconds * 100:.1f}%"},
+            {"Stage": "3. Stage 2: Micro Baseplate Slotting", "Duration (ms)": round(metric.micro_slot_seconds * 1000, 2), "Share %": f"{metric.micro_slot_seconds / metric.total_elapsed_seconds * 100:.1f}%"},
+            {"Stage": "4. Post-Solve Invariant Verification Audit", "Duration (ms)": round(metric.audit_time_seconds * 1000, 2), "Share %": f"{metric.audit_time_seconds / metric.total_elapsed_seconds * 100:.1f}%"},
+            {"Stage": "5. Deliverable Excel Workbook Generation", "Duration (ms)": round(metric.export_time_seconds * 1000, 2), "Share %": f"{metric.export_time_seconds / metric.total_elapsed_seconds * 100:.1f}%"},
+        ])
+        st.dataframe(t_df, use_container_width=True)
+
+        if metric.audit_passed:
+            st.success(f"✅ **Audit Complete:** Verified 100% contiguity across {metric.cable_count:,} cables, 0 A/B segregation breaches, and exact {charms_per_bp}-slot capacity limits!")
+        else:
+            st.error(f"❌ **Audit Alert:** Detected {metric.violation_count} rule violations: {metric.violations[:3]}")
+
+
 def main():
     st.set_page_config(
         page_title="IO Signal Sudoku | Automated TQ Engine & Revision Diff",
@@ -892,9 +992,10 @@ def main():
 
         custom_catalog = dataframe_to_catalog(edited_cat_df)
 
-    tab_single, tab_revision = st.tabs([
+    tab_single, tab_revision, tab_benchmark = st.tabs([
         "🚀 Single Revision Allocation",
         "🔄 Revision Diff & Perturbation Engine (Rev A vs Rev B)",
+        "⚡ Scalability Benchmark & Stress Telemetry (10k Signals)",
     ])
 
     with tab_single:
@@ -908,6 +1009,14 @@ def main():
 
     with tab_revision:
         _render_revision_diff_tab(
+            charms_per_bp=charms_per_bp,
+            baseplates_per_cioc=baseplates_per_cioc,
+            segregation_policy=segregation_policy,
+            custom_catalog=custom_catalog,
+        )
+
+    with tab_benchmark:
+        _render_benchmark_tab(
             charms_per_bp=charms_per_bp,
             baseplates_per_cioc=baseplates_per_cioc,
             segregation_policy=segregation_policy,

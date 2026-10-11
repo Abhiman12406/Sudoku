@@ -68,6 +68,85 @@ def _get_occupied_slots(
     return slots
 
 
+def _try_fast_slot_placement(
+    sorted_blocks: Sequence[CableBlock],
+    baseplates_per_cioc: int = 8,
+    charms_per_baseplate: int = 12,
+) -> Optional[Dict[int, Tuple[int, int]]]:
+    """Attempt fast deterministic slot assignment for standard industrial cables.
+
+    Returns a mapping of block_index -> (start_baseplate, start_slot) if successful,
+    or None if non-standard sizes or packing fragmentation requires CP-SAT fallback.
+    """
+    grid = [[False] * charms_per_baseplate for _ in range(baseplates_per_cioc)]
+    placements: Dict[int, Tuple[int, int]] = {}
+
+    for k, block in enumerate(sorted_blocks):
+        pc = block.pair_count
+        placed = False
+
+        if pc == 24:
+            for bp in range(1, baseplates_per_cioc):
+                if not any(grid[bp - 1]) and not any(grid[bp]):
+                    grid[bp - 1] = [True] * charms_per_baseplate
+                    grid[bp] = [True] * charms_per_baseplate
+                    placements[k] = (bp, 1)
+                    placed = True
+                    break
+
+        elif pc == 12:
+            for bp in range(1, baseplates_per_cioc + 1):
+                if not any(grid[bp - 1]):
+                    grid[bp - 1] = [True] * charms_per_baseplate
+                    placements[k] = (bp, 1)
+                    placed = True
+                    break
+
+        elif pc == 6:
+            for bp in range(1, baseplates_per_cioc + 1):
+                if not any(grid[bp - 1][0:6]):
+                    for s in range(6):
+                        grid[bp - 1][s] = True
+                    placements[k] = (bp, 1)
+                    placed = True
+                    break
+                elif not any(grid[bp - 1][6:12]):
+                    for s in range(6, 12):
+                        grid[bp - 1][s] = True
+                    placements[k] = (bp, 7)
+                    placed = True
+                    break
+
+        elif pc == 2:
+            for bp in range(1, baseplates_per_cioc + 1):
+                for s in (1, 3, 5, 7, 9, 11):
+                    if not grid[bp - 1][s - 1] and not grid[bp - 1][s]:
+                        grid[bp - 1][s - 1] = True
+                        grid[bp - 1][s] = True
+                        placements[k] = (bp, s)
+                        placed = True
+                        break
+                if placed:
+                    break
+
+        elif pc <= charms_per_baseplate:
+            for bp in range(1, baseplates_per_cioc + 1):
+                for s in range(1, charms_per_baseplate - pc + 2):
+                    if not any(grid[bp - 1][s - 1 : s - 1 + pc]):
+                        for offset in range(pc):
+                            grid[bp - 1][s - 1 + offset] = True
+                        placements[k] = (bp, s)
+                        placed = True
+                        break
+                if placed:
+                    break
+
+        if not placed:
+            return None
+
+    return placements
+
+
 def slot_cable_blocks_in_cioc(
     cable_blocks: Sequence[CableBlock],
     cioc_id: int = 1,
@@ -102,68 +181,82 @@ def slot_cable_blocks_in_cioc(
     # Sort blocks deterministically: larger blocks first, then by cable_id
     sorted_blocks = sorted(cable_blocks, key=lambda b: (-b.pair_count, b.cable_id))
 
-    model = cp_model.CpModel()
+    # Fast deterministic placement for standard industrial sizes (sub-millisecond)
+    fast_placements = _try_fast_slot_placement(
+        sorted_blocks,
+        baseplates_per_cioc=baseplates_per_cioc,
+        charms_per_baseplate=charms_per_baseplate,
+    )
 
-    # Candidate placement decision variables
-    z = {}
-    candidate_map: Dict[int, List[Tuple[int, int]]] = {}
+    chosen_placements: Dict[int, Tuple[int, int]] = {}
 
-    for k, block in enumerate(sorted_blocks):
-        candidates = _get_candidate_placements(
-            block.pair_count,
-            baseplates_per_cioc=baseplates_per_cioc,
-            charms_per_baseplate=charms_per_baseplate,
-        )
-        candidate_map[k] = candidates
-        for p_idx, (bp, slot) in enumerate(candidates):
-            z[k, p_idx] = model.NewBoolVar(f"z_b{k}_p{p_idx}")
+    if fast_placements is not None:
+        chosen_placements = fast_placements
+    else:
+        # Fall back to CP-SAT solver
+        model = cp_model.CpModel()
 
-    # Constraint 1: Exactly one placement per block
-    for k in range(len(sorted_blocks)):
-        model.Add(sum(z[k, p_idx] for p_idx in range(len(candidate_map[k]))) == 1)
+        # Candidate placement decision variables
+        z = {}
+        candidate_map: Dict[int, List[Tuple[int, int]]] = {}
 
-    # Constraint 2: No slot collision across blocks
-    # Map each (bp, slot) to the (k, p_idx) placements that occupy it
-    slot_to_placements = defaultdict(list)
-    for k, block in enumerate(sorted_blocks):
-        for p_idx, (bp, slot) in enumerate(candidate_map[k]):
-            occ = _get_occupied_slots(bp, slot, block.pair_count, charms_per_baseplate=charms_per_baseplate)
-            for coord in occ:
-                slot_to_placements[coord].append((k, p_idx))
+        for k, block in enumerate(sorted_blocks):
+            candidates = _get_candidate_placements(
+                block.pair_count,
+                baseplates_per_cioc=baseplates_per_cioc,
+                charms_per_baseplate=charms_per_baseplate,
+            )
+            candidate_map[k] = candidates
+            for p_idx, (bp, slot) in enumerate(candidates):
+                z[k, p_idx] = model.NewBoolVar(f"z_b{k}_p{p_idx}")
 
-    for coord, plist in slot_to_placements.items():
-        model.Add(sum(z[k, p_idx] for (k, p_idx) in plist) <= 1)
+        # Constraint 1: Exactly one placement per block
+        for k in range(len(sorted_blocks)):
+            model.Add(sum(z[k, p_idx] for p_idx in range(len(candidate_map[k]))) == 1)
 
-    # Objective: Pack tightly from earlier baseplates and slots
-    objective_terms = []
-    for k in range(len(sorted_blocks)):
-        for p_idx, (bp, slot) in enumerate(candidate_map[k]):
-            lin_pos = (bp - 1) * charms_per_baseplate + slot
-            objective_terms.append(lin_pos * z[k, p_idx])
+        # Constraint 2: No slot collision across blocks
+        # Map each (bp, slot) to the (k, p_idx) placements that occupy it
+        slot_to_placements = defaultdict(list)
+        for k, block in enumerate(sorted_blocks):
+            for p_idx, (bp, slot) in enumerate(candidate_map[k]):
+                occ = _get_occupied_slots(bp, slot, block.pair_count, charms_per_baseplate=charms_per_baseplate)
+                for coord in occ:
+                    slot_to_placements[coord].append((k, p_idx))
 
-    model.Minimize(sum(objective_terms))
+        for coord, plist in slot_to_placements.items():
+            model.Add(sum(z[k, p_idx] for (k, p_idx) in plist) <= 1)
 
-    solver = cp_model.CpSolver()
-    solver.parameters.max_time_in_seconds = time_limit_seconds
-    solver.parameters.num_search_workers = 4
+        # Objective: Pack tightly from earlier baseplates and slots
+        objective_terms = []
+        for k in range(len(sorted_blocks)):
+            for p_idx, (bp, slot) in enumerate(candidate_map[k]):
+                lin_pos = (bp - 1) * charms_per_baseplate + slot
+                objective_terms.append(lin_pos * z[k, p_idx])
 
-    status = solver.Solve(model)
-    if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-        raise RuntimeError(
-            f"Stage 2 micro-slotting solver failed for CIOC {cioc_id} with status {solver.StatusName(status)}"
-        )
+        model.Minimize(sum(objective_terms))
+
+        solver = cp_model.CpSolver()
+        solver.parameters.max_time_in_seconds = time_limit_seconds
+        solver.parameters.num_search_workers = 4
+
+        status = solver.Solve(model)
+        if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+            raise RuntimeError(
+                f"Stage 2 micro-slotting solver failed for CIOC {cioc_id} with status {solver.StatusName(status)}"
+            )
+
+        for k in range(len(sorted_blocks)):
+            for p_idx, (bp, slot) in enumerate(candidate_map[k]):
+                if solver.Value(z[k, p_idx]) == 1:
+                    chosen_placements[k] = (bp, slot)
+                    break
 
     allocations: List[AllocatedSignal] = []
 
     for k, block in enumerate(sorted_blocks):
-        chosen_bp, chosen_slot = None, None
-        for p_idx, (bp, slot) in enumerate(candidate_map[k]):
-            if solver.Value(z[k, p_idx]) == 1:
-                chosen_bp, chosen_slot = bp, slot
-                break
-
-        if chosen_bp is None or chosen_slot is None:
+        if k not in chosen_placements:
             raise RuntimeError(f"No placement found for block {block.cable_id}")
+        chosen_bp, chosen_slot = chosen_placements[k]
 
         occ_coords = _get_occupied_slots(
             chosen_bp,
