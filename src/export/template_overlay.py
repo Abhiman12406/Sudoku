@@ -4,7 +4,7 @@ import copy
 import io
 from pathlib import Path
 import re
-from typing import BinaryIO, Dict, List, Optional, Sequence, Union
+from typing import Any, BinaryIO, Callable, Dict, List, Optional, Sequence, Union
 
 import openpyxl
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
@@ -12,6 +12,25 @@ from openpyxl.utils import get_column_letter
 
 from src.domain.models import AllocatedSignal
 
+
+# Field value extractors via clean dictionary dispatch
+FIELD_EXTRACTORS: Dict[str, Callable[[AllocatedSignal], Any]] = {
+    "tag": lambda a: a.tag,
+    "io_type": lambda a: a.io_type.value if hasattr(a.io_type, "value") else str(a.io_type),
+    "cabinet": lambda a: a.cabinet_name,
+    "cioc": lambda a: a.cioc,
+    "baseplate": lambda a: a.baseplate,
+    "slot": lambda a: a.slot,
+    "cable_id": lambda a: a.cable_id or "-",
+    "pair_no": lambda a: a.pair_no or "-",
+    "charm_model": lambda a: a.charm_model or "-",
+    "charm_part_no": lambda a: a.charm_part_no or "-",
+    "terminal_block_type": lambda a: a.terminal_block_type or "-",
+    "terminal_block_part_no": lambda a: a.terminal_block_part_no or "-",
+    "description": lambda a: a.description or "",
+    "segregation": lambda a: a.segregation or "-",
+    "status": lambda a: "WIRED SPARE" if a.is_spare else "Active Loop",
+}
 
 # Normalized header synonyms for auto-mapping
 HEADER_SYNONYMS: Dict[str, List[str]] = {
@@ -29,7 +48,7 @@ HEADER_SYNONYMS: Dict[str, List[str]] = {
     "terminal_block_part_no": ["terminal block part no", "tb part no", "tb p/n", "terminal_block_part_no"],
     "description": ["description", "desc", "service", "tag description", "loop description"],
     "segregation": ["segregation", "seg", "train", "redundancy"],
-    "status": ["status", "signal status", "allocation status", "rev status", "spare"],
+    "status": ["status", "signal status", "allocation status", "rev status", "channel status", "spare"],
 }
 
 
@@ -39,21 +58,23 @@ def _normalize_header(text: str) -> str:
 
 
 def _find_field_for_header(header_text: str) -> Optional[str]:
-    """Match header text to known field using synonym table."""
+    """Match header text to known field using exact synonym match or token match."""
     norm = _normalize_header(header_text)
     if not norm:
         return None
 
-    # Exact match first
+    # 1. Exact match
     for field, synonyms in HEADER_SYNONYMS.items():
         for syn in synonyms:
             if norm == syn:
                 return field
 
-    # Substring / contains match
+    # 2. Token set containment for multi-word phrases (avoids short substring false positives)
+    norm_tokens = set(norm.split())
     for field, synonyms in HEADER_SYNONYMS.items():
         for syn in synonyms:
-            if syn in norm or norm in syn:
+            syn_tokens = set(syn.split())
+            if len(syn_tokens) > 1 and syn_tokens.issubset(norm_tokens):
                 return field
 
     return None
@@ -174,40 +195,10 @@ def overlay_allocation_on_template(
             if c in formula_cols:
                 target_cell.value = _adjust_formula_row(formula_cols[c], source_row=2, target_row=row_num)
 
-        # Write mapped data values
+        # Write mapped data values using extractor dispatch table
         for c, field in col_to_field.items():
-            target_cell = ws.cell(row=row_num, column=c)
-
-            if field == "tag":
-                target_cell.value = alloc.tag
-            elif field == "io_type":
-                val = alloc.io_type.value if hasattr(alloc.io_type, "value") else str(alloc.io_type)
-                target_cell.value = val
-            elif field == "cabinet":
-                target_cell.value = alloc.cabinet_name
-            elif field == "cioc":
-                target_cell.value = alloc.cioc
-            elif field == "baseplate":
-                target_cell.value = alloc.baseplate
-            elif field == "slot":
-                target_cell.value = alloc.slot
-            elif field == "cable_id":
-                target_cell.value = alloc.cable_id or "-"
-            elif field == "pair_no":
-                target_cell.value = alloc.pair_no or "-"
-            elif field == "charm_model":
-                target_cell.value = alloc.charm_model or "-"
-            elif field == "charm_part_no":
-                target_cell.value = alloc.charm_part_no or "-"
-            elif field == "terminal_block_type":
-                target_cell.value = alloc.terminal_block_type or "-"
-            elif field == "terminal_block_part_no":
-                target_cell.value = alloc.terminal_block_part_no or "-"
-            elif field == "description":
-                target_cell.value = alloc.description or ""
-            elif field == "segregation":
-                target_cell.value = alloc.segregation or "-"
-            elif field == "status":
-                target_cell.value = "WIRED SPARE" if alloc.is_spare else "Active Loop"
+            extractor = FIELD_EXTRACTORS.get(field)
+            if extractor:
+                ws.cell(row=row_num, column=c, value=extractor(alloc))
 
     return wb
