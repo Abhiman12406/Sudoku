@@ -1,0 +1,59 @@
+{
+  "version": 1,
+  "skills": {
+    "algorithm-design": {
+      "source": "lingzhi227/agent-research-skills",
+      "sourceType": "github",
+      "skillPath": "skills/algorithm-design/SKILL.md",
+      "computedHash": "5177107bf00ba948f1beff6dcfac05824af7a4d1e3847c0b27238aead3bfd0a9"
+    },
+    "constraint-driven-development": {
+      "source": "addyosmani/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/constraint-driven-development/SKILL.md",
+      "computedHash": "7cdf20ff7d27eb3103b206033a1d87af7afe4a648162f09cd382fc8e3cb9a42b"
+    },
+    "fastapi": {
+      "source": "fastapi/fastapi",
+      "sourceType": "github",
+      "skillPath": "fastapi/.agents/skills/fastapi/SKILL.md",
+      "computedHash": "d56d37ade7abbede852aef02728e3e228c82f7ccce464ef1f889456a64fffb86"
+    },
+    "find-skills": {
+      "source": "vercel-labs/skills",
+      "sourceType": "github",
+      "skillPath": "skills/find-skills/SKILL.md",
+      "computedHash": "b146008599c31057cef1c145774cea5d5afb30e8f43fa802e47a4b461419aaaf"
+    },
+    "networkx": {
+      "source": "k-dense-ai/scientific-agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/networkx/SKILL.md",
+      "computedHash": "91853e18658889af4c2a04eb7877651893abe2b7362a0d900303a40942ccdb98"
+    },
+    "pymoo": {
+      "source": "k-dense-ai/scientific-agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/pymoo/SKILL.md",
+      "computedHash": "02e498fcafa14e75abc2b0400aedbf407e7821d3cfdea98c1645a53672fe84d9"
+    },
+    "python-design-patterns": {
+      "source": "wshobson/agents",
+      "sourceType": "github",
+      "skillPath": "plugins/python-development/skills/python-design-patterns/SKILL.md",
+      "computedHash": "a8f1eebda28a169f366da393b6a2f836583022b4ca3f2c330eabde1e5cccb08b"
+    },
+    "python-testing-patterns": {
+      "source": "wshobson/agents",
+      "sourceType": "github",
+      "skillPath": "plugins/python-development/skills/python-testing-patterns/SKILL.md",
+      "computedHash": "66b0f13c33ca5689ce6d59dfc6c441bacf3d017299d8ee3c30a028299e5d28e9"
+    },
+    "xlsx": {
+      "source": "anthropics/skills",
+      "sourceType": "github",
+      "skillPath": "skills/xlsx/SKILL.md",
+      "computedHash": "cbaaabead69c5e03643f116cde6a396ad53f6da058da6eaa7bad6c4fbafe6026"
+    }
+  }
+}

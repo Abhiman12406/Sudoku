@@ -1,0 +1,30 @@
+# Default Industrial Rule Configuration for IO Signal Sudoku
+rules:
+  physical_limits:
+    charms_per_baseplate: 12
+    baseplates_per_cioc: 8
+    ciocs_per_cabinet: 4
+
+  spare_margins:
+    target_spare_percentage: 20.0
+    min_spare_percentage: 10.0
+
+  segregation_policies:
+    enforce_train_ab_segregation: true
+    segregation_level: "CIOC" # "CIOC" or "CABINET"
+
+  cable_contiguity:
+    enforce_contiguous_pairs: true
+    strict_ascending_pair_order: true
+
+  naming_conventions:
+    cabinet_prefix: "CAB"
+    cioc_pattern: "CIOC-{cioc_id:02d}"
+    baseplate_pattern: "BP-{bp_id:02d}"
+    slot_pattern: "SLOT-{slot_id:02d}"
+
+  revision_perturbation_penalties:
+    cabinet_move_penalty: 10000
+    cioc_move_penalty: 1000
+    baseplate_move_penalty: 100
+    slot_move_penalty: 10

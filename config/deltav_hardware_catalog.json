@@ -1,0 +1,46 @@
+{
+  "hardware_catalog": {
+    "AI": {
+      "charm_description": "Analog Input 4-20 mA HART",
+      "charm_part_no": "KL3001X1-BA1",
+      "terminal_block_type": "Standard",
+      "terminal_block_part_no": "KL4001X1-BA1"
+    },
+    "AO": {
+      "charm_description": "Analog Output 4-20 mA HART",
+      "charm_part_no": "KL3002X1-BA1",
+      "terminal_block_type": "Standard",
+      "terminal_block_part_no": "KL4001X1-BA1"
+    },
+    "DI": {
+      "charm_description": "Discrete Input 24 VDC Isolated",
+      "charm_part_no": "KL3003X1-BA1",
+      "terminal_block_type": "Standard",
+      "terminal_block_part_no": "KL4001X1-BA1"
+    },
+    "DO": {
+      "charm_description": "Discrete Output 24 VDC High-Side",
+      "charm_part_no": "KL3004X1-BA1",
+      "terminal_block_type": "Fused Injected-Power",
+      "terminal_block_part_no": "KL4002X1-BA1"
+    },
+    "DO_RELAY": {
+      "charm_description": "Relay Output Form C Isolated",
+      "charm_part_no": "KL3005X1-BA1",
+      "terminal_block_type": "Relay Form C",
+      "terminal_block_part_no": "KL4003X1-BA1"
+    },
+    "TC": {
+      "charm_description": "Thermocouple / mV Input",
+      "charm_part_no": "KL3006X1-BA1",
+      "terminal_block_type": "CJC",
+      "terminal_block_part_no": "KL4004X1-BA1"
+    },
+    "RTD": {
+      "charm_description": "RTD / Resistance Input",
+      "charm_part_no": "KL3007X1-BA1",
+      "terminal_block_type": "Standard",
+      "terminal_block_part_no": "KL4001X1-BA1"
+    }
+  }
+}
