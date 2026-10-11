@@ -57,3 +57,35 @@ def test_parse_invalid_io_type_raises_error():
 
     with pytest.raises((ValueError, ValidationError)):
         parse_signal_file(io.BytesIO(buf.getvalue()))
+
+
+def test_parse_and_validate_signals_isolates_corrupt_data():
+    from src.ingestion.parser import parse_and_validate_signals
+
+    corrupt_data = {
+        "Instrument Tag": ["10-FT-101", "10-FT-101", "10-PT-102", "10-BAD-999", "10-TT-103"],
+        "Signal Type": ["AI", "AI", "AI", "CORRUPT_TYPE", "RTD"],
+        "Trunk Cable": ["CBL-01", "CBL-01", "CBL-01", "CBL-01", "CBL-01"],
+        "Pair #": [1, 1, 2, 3, 25],  # Duplicate tag/pair, corrupt type, pair overflow (25)
+    }
+    df = pd.DataFrame(corrupt_data)
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False)
+
+    valid_signals, tqs = parse_and_validate_signals(io.BytesIO(buf.getvalue()))
+
+    # Only 10-PT-102 is completely valid
+    assert len(valid_signals) == 1
+    assert valid_signals[0].tag == "10-PT-102"
+    assert valid_signals[0].io_type == IOType.AI
+
+    # Multiple TQs emitted
+    assert len(tqs) >= 3
+    tq_categories = [t.category for t in tqs]
+    assert "Duplicate Tag" in tq_categories
+    assert "Unknown IO Type" in tq_categories
+    assert "Capacity Overflow" in tq_categories
+    for t in tqs:
+        assert t.tq_id.startswith("TQ-INST-")
+

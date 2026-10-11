@@ -1,14 +1,16 @@
 """Walking skeleton CP-SAT slot assignment solver for DeltaV CHARMs."""
 
-from typing import List, Sequence
+from typing import List, Optional, Sequence
 from ortools.sat.python import cp_model
 
-from src.domain.hardware import resolve_hardware_for_io
+from src.domain.hardware import resolve_hardware_assignment, resolve_hardware_for_io
 from src.domain.models import AllocatedSignal, Signal
 
 
 def solve_walking_skeleton(
-    signals: Sequence[Signal], charms_per_baseplate: int = 12
+    signals: Sequence[Signal],
+    charms_per_baseplate: int = 12,
+    catalog: Optional[dict] = None,
 ) -> List[AllocatedSignal]:
     """Assign physical baseplate and slot coordinates using Google OR-Tools CP-SAT.
 
@@ -21,6 +23,7 @@ def solve_walking_skeleton(
     Args:
         signals: List of validated input Signal domain models.
         charms_per_baseplate: Capacity of each physical baseplate (12).
+        catalog: Optional custom hardware catalog mapping.
 
     Returns:
         List of AllocatedSignal models sorted by (baseplate, slot).
@@ -84,7 +87,12 @@ def solve_walking_skeleton(
     for i, sig in enumerate(signals):
         bp_val = solver.Value(baseplate_vars[i])
         slot_val = solver.Value(slot_vars[i])
-        charm_part, tb_type = resolve_hardware_for_io(sig.io_type)
+        hw = resolve_hardware_assignment(
+            sig.io_type,
+            description=sig.description,
+            tag=sig.tag,
+            catalog=catalog,
+        )
 
         allocations.append(
             AllocatedSignal(
@@ -95,8 +103,10 @@ def solve_walking_skeleton(
                 cable_id=sig.cable_id,
                 pair_no=sig.pair_no,
                 description=sig.description,
-                charm_part_no=charm_part,
-                terminal_block_type=tb_type,
+                charm_model=hw.charm_model,
+                charm_part_no=hw.charm_part_no,
+                terminal_block_type=hw.terminal_block_type,
+                terminal_block_part_no=hw.terminal_block_part_no,
             )
         )
 

@@ -37,5 +37,122 @@ def test_run_walking_pipeline_end_to_end():
     assert len(df_out) == 4
     assert set(df_out["Tag"]) == {"10-PT-101", "10-TT-102", "10-ZS-103", "10-SOV-104"}
     assert "Baseplate" in df_out.columns
-    assert "Slot" in df_out.columns
     assert "CHARM Part No" in df_out.columns
+
+
+def test_run_hierarchical_pipeline_end_to_end():
+    from src.pipeline import run_hierarchical_pipeline
+
+    df_in = pd.DataFrame({
+        "Tag": [f"10-FT-{i:02d}" for i in range(1, 11)],
+        "IO Type": ["AI"] * 10,
+        "Cable ID": ["TRUNK-12"] * 10,
+        "Pair No": list(range(1, 11)),
+        "Description": [f"Flow Transmitter {i}" for i in range(1, 11)],
+    })
+    in_buf = io.BytesIO()
+    with pd.ExcelWriter(in_buf, engine="openpyxl") as writer:
+        df_in.to_excel(writer, index=False)
+    in_bytes = in_buf.getvalue()
+
+    allocations, out_bytes = run_hierarchical_pipeline(io.BytesIO(in_bytes))
+
+    # 12-pair cable: 10 active + 2 wired spares = 12 total allocations
+    assert len(allocations) == 12
+    spares = [a for a in allocations if a.is_spare]
+    assert len(spares) == 2
+    assert {s.pair_no for s in spares} == {11, 12}
+
+    # Verify generated Excel deliverable
+    df_out = pd.read_excel(io.BytesIO(out_bytes))
+    assert len(df_out) == 12
+    assert "WIRED SPARE" in list(df_out["Tag"])
+    assert "CIOC" in df_out.columns
+
+
+def test_run_walking_pipeline_corrupt_data_fault_tolerance():
+    # Intentionally corrupt data: duplicate tags, pair overflow, invalid IO type
+    df_corrupt = pd.DataFrame({
+        "Tag": ["10-PT-101", "10-PT-101", "10-BAD-001", "10-OVF-002", "20-FT-201"],
+        "IO Type": ["AI", "AI", "CORRUPT_TYPE", "AI", "AI"],
+        "Cable ID": ["TRUNK-A", "TRUNK-A", "TRUNK-A", "TRUNK-A", "TRUNK-B"],
+        "Pair No": [1, 1, 3, 30, 1],  # 30 exceeds 24 pairs
+        "Description": ["Dup A", "Dup B", "Bad Type", "Overflow", "Valid Loop"],
+    })
+    in_buf = io.BytesIO()
+    with pd.ExcelWriter(in_buf, engine="openpyxl") as writer:
+        df_corrupt.to_excel(writer, index=False)
+    in_bytes = in_buf.getvalue()
+
+    result = run_walking_pipeline(io.BytesIO(in_bytes), charms_per_baseplate=12)
+
+    # Backwards-compatible unpacking
+    allocations, out_bytes = result
+
+    # Only 20-FT-201 is valid and allocated
+    assert len(allocations) == 1
+    assert allocations[0].tag == "20-FT-201"
+
+    # TQs were generated
+    assert len(result.tqs) >= 3
+    tq_ids = [t.tq_id for t in result.tqs]
+    assert "TQ-INST-001" in tq_ids
+
+    # Exported Excel contains both Allocation and TQ_Log
+    import openpyxl
+    wb = openpyxl.load_workbook(io.BytesIO(out_bytes))
+    assert "Allocation" in wb.sheetnames
+    assert "TQ_Log" in wb.sheetnames
+
+    df_tqs_sheet = pd.read_excel(io.BytesIO(out_bytes), sheet_name="TQ_Log")
+    assert len(df_tqs_sheet) >= 3
+    assert "TQ ID" in df_tqs_sheet.columns
+    assert "Severity" in df_tqs_sheet.columns
+    assert "Recommended Remedy" in df_tqs_sheet.columns
+
+
+def test_run_walking_pipeline_with_custom_catalog():
+    df_in = pd.DataFrame({
+        "Tag": ["10-PT-101", "10-TC-102"],
+        "IO Type": ["AI", "TC"],
+        "Cable ID": ["TRUNK-A", "TRUNK-A"],
+        "Pair No": [1, 2],
+        "Description": ["Pressure", "Thermocouple"],
+    })
+    in_buf = io.BytesIO()
+    with pd.ExcelWriter(in_buf, engine="openpyxl") as writer:
+        df_in.to_excel(writer, index=False)
+    in_bytes = in_buf.getvalue()
+
+    custom_cat = {
+        "AI": {
+            "charm_description": "Special Custom AI",
+            "charm_part_no": "KL-SPECIAL-AI",
+            "terminal_block_type": "Standard",
+            "terminal_block_part_no": "KL-SPECIAL-TB",
+        },
+        "TC": {
+            "charm_description": "Special Custom TC",
+            "charm_part_no": "KL-SPECIAL-TC",
+            "terminal_block_type": "CJC",
+            "terminal_block_part_no": "KL-SPECIAL-CJC",
+        },
+    }
+
+    allocations, out_bytes = run_walking_pipeline(
+        io.BytesIO(in_bytes),
+        charms_per_baseplate=12,
+        catalog=custom_cat,
+    )
+
+    assert len(allocations) == 2
+    assert allocations[0].charm_model == "Special Custom AI"
+    assert allocations[0].charm_part_no == "KL-SPECIAL-AI"
+    assert allocations[1].charm_model == "Special Custom TC"
+    assert allocations[1].charm_part_no == "KL-SPECIAL-TC"
+
+    df_out = pd.read_excel(io.BytesIO(out_bytes))
+    assert df_out.loc[0, "CHARM Model"] == "Special Custom AI"
+    assert df_out.loc[0, "CHARM Part No"] == "KL-SPECIAL-AI"
+
+

@@ -1,4 +1,4 @@
-"""Excel export module for allocated DeltaV signals."""
+"""Excel export module for allocated DeltaV signals and Technical Queries."""
 
 import io
 from pathlib import Path
@@ -7,81 +7,136 @@ import openpyxl
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
-from src.domain.models import AllocatedSignal
+from src.domain.models import AllocatedSignal, TechnicalQuery
 
-COLUMNS = [
+ALLOCATION_COLUMNS = [
     ("Tag", "tag"),
     ("IO Type", "io_type"),
+    ("CIOC", "cioc"),
     ("Baseplate", "baseplate"),
     ("Slot", "slot"),
     ("Cable ID", "cable_id"),
     ("Pair No", "pair_no"),
+    ("CHARM Model", "charm_model"),
     ("CHARM Part No", "charm_part_no"),
     ("Terminal Block Type", "terminal_block_type"),
+    ("Terminal Block Part No", "terminal_block_part_no"),
     ("Description", "description"),
+]
+
+COLUMNS = ALLOCATION_COLUMNS
+
+TQ_COLUMNS = [
+    ("TQ ID", "tq_id"),
+    ("Severity", "severity"),
+    ("Category", "category"),
+    ("Impacted Tag", "impacted_tag"),
+    ("Description", "description"),
+    ("Recommended Remedy", "recommended_remedy"),
 ]
 
 
 def export_allocation_to_excel(
     allocations: Sequence[AllocatedSignal],
     output_path_or_buffer: Optional[Union[str, Path, BinaryIO]] = None,
+    tqs: Optional[Sequence[TechnicalQuery]] = None,
 ) -> bytes:
     """Export allocated signals to a styled Excel workbook (.xlsx).
 
     Args:
         allocations: Sequence of AllocatedSignal objects.
         output_path_or_buffer: Optional file path or buffer to write to.
+        tqs: Optional sequence of TechnicalQuery records to write to TQ_Log sheet.
 
     Returns:
         Raw bytes of the generated Excel workbook.
     """
     wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = "Allocation"
 
-    # Header styling
-    header_font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
-    header_fill = PatternFill(start_color="1F497D", end_color="1F497D", fill_type="solid")
-    header_alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    # --- Sheet 1: Allocation ---
+    ws_alloc = wb.active
+    ws_alloc.title = "Allocation"
 
-    # Write headers
-    for col_idx, (col_name, _) in enumerate(COLUMNS, start=1):
-        cell = ws.cell(row=1, column=col_idx, value=col_name)
-        cell.font = header_font
-        cell.fill = header_fill
-        cell.alignment = header_alignment
+    # Header styling for Allocation
+    alloc_header_font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
+    alloc_header_fill = PatternFill(start_color="1F497D", end_color="1F497D", fill_type="solid")
+    center_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    left_align = Alignment(horizontal="left", vertical="center")
 
-    # Write rows
-    center_alignment = Alignment(horizontal="center", vertical="center")
-    left_alignment = Alignment(horizontal="left", vertical="center")
+    for col_idx, (col_name, _) in enumerate(ALLOCATION_COLUMNS, start=1):
+        cell = ws_alloc.cell(row=1, column=col_idx, value=col_name)
+        cell.font = alloc_header_font
+        cell.fill = alloc_header_fill
+        cell.alignment = center_align
+
+    spare_font = Font(name="Calibri", size=10, italic=True, color="595959")
+    spare_fill = PatternFill(start_color="F2F2F2", end_color="F2F2F2", fill_type="solid")
 
     for row_idx, alloc in enumerate(allocations, start=2):
-        for col_idx, (_, attr_name) in enumerate(COLUMNS, start=1):
+        for col_idx, (_, attr_name) in enumerate(ALLOCATION_COLUMNS, start=1):
             val = getattr(alloc, attr_name)
-            # Normalize IOType enum to string
             if hasattr(val, "value"):
                 val = val.value
-            cell = ws.cell(row=row_idx, column=col_idx, value=val)
+            cell = ws_alloc.cell(row=row_idx, column=col_idx, value=val)
 
-            if attr_name in ("baseplate", "slot", "pair_no", "io_type"):
-                cell.alignment = center_alignment
+            if alloc.is_spare:
+                cell.font = spare_font
+                cell.fill = spare_fill
+
+            if attr_name in ("cioc", "baseplate", "slot", "pair_no", "io_type"):
+                cell.alignment = Alignment(horizontal="center", vertical="center")
             else:
-                cell.alignment = left_alignment
+                cell.alignment = left_align
 
-    # Auto-fit column widths
-    for col in ws.columns:
+
+    for col in ws_alloc.columns:
         max_len = 0
         col_letter = get_column_letter(col[0].column)
         for cell in col:
             val_str = str(cell.value or "")
             if len(val_str) > max_len:
                 max_len = len(val_str)
-        ws.column_dimensions[col_letter].width = max(max_len + 4, 12)
+        ws_alloc.column_dimensions[col_letter].width = max(max_len + 4, 12)
 
-    # Freeze panes on header row
-    ws.freeze_panes = "A2"
+    ws_alloc.freeze_panes = "A2"
 
-    # Save to buffer
+    # --- Sheet 2: TQ_Log ---
+    ws_tq = wb.create_sheet(title="TQ_Log")
+
+    tq_header_font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
+    tq_header_fill = PatternFill(start_color="800000", end_color="800000", fill_type="solid")
+
+    for col_idx, (col_name, _) in enumerate(TQ_COLUMNS, start=1):
+        cell = ws_tq.cell(row=1, column=col_idx, value=col_name)
+        cell.font = tq_header_font
+        cell.fill = tq_header_fill
+        cell.alignment = center_align
+
+    if tqs:
+        for row_idx, tq in enumerate(tqs, start=2):
+            for col_idx, (_, attr_name) in enumerate(TQ_COLUMNS, start=1):
+                val = getattr(tq, attr_name)
+                if hasattr(val, "value"):
+                    val = val.value
+                cell = ws_tq.cell(row=row_idx, column=col_idx, value=val)
+
+                if attr_name in ("tq_id", "severity"):
+                    cell.alignment = Alignment(horizontal="center", vertical="center")
+                else:
+                    cell.alignment = left_align
+
+    for col in ws_tq.columns:
+        max_len = 0
+        col_letter = get_column_letter(col[0].column)
+        for cell in col:
+            val_str = str(cell.value or "")
+            if len(val_str) > max_len:
+                max_len = len(val_str)
+        ws_tq.column_dimensions[col_letter].width = max(max_len + 4, 14)
+
+    ws_tq.freeze_panes = "A2"
+
+    # Save workbook to memory buffer
     buf = io.BytesIO()
     wb.save(buf)
     excel_bytes = buf.getvalue()
