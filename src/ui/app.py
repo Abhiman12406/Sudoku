@@ -158,7 +158,7 @@ def format_severity_badge(severity: str) -> str:
 def catalog_to_dataframe(catalog: dict) -> pd.DataFrame:
     """Convert hardware catalog dictionary to editable DataFrame."""
     rows = []
-    for sig_key in ["AI", "AO", "DI", "DO", "DO_RELAY", "TC", "RTD"]:
+    for sig_key in ["AI", "AO", "DI", "DO", "DO_RELAY", "TC", "RTD", "SPARE"]:
         entry = catalog.get(sig_key, {})
         rows.append({
             "Signal Type": sig_key,

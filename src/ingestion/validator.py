@@ -123,6 +123,8 @@ def validate_dataframe(
         raw_io_str = str(raw_io).strip().upper().replace("-", "_").replace(" ", "_")
         if raw_io_str in ("RELAY", "DO_RELAY"):
             raw_io_str = "DO_RELAY"
+        elif raw_io_str in ("SOV", "SOLENOID", "DO_SOLENOID"):
+            raw_io_str = "DO"
 
         # 3. Check Unknown IO Type
         try:

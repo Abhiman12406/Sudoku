@@ -127,6 +127,26 @@ def test_resolve_hardware_spare_channel():
     assert hw_spare.terminal_block_part_no == "KL4001X1-BA1"
 
 
+def test_resolve_hardware_with_signal_object():
+    sig_ai = Signal(tag="10-FT-101", io_type=IOType.AI, description="Inlet Flow")
+    hw_ai = resolve_hardware_assignment(sig_ai)
+    assert hw_ai.charm_model == "Analog Input 4-20 mA HART"
+    assert hw_ai.terminal_block_type == "Standard"
+
+    sig_relay = Signal(tag="10-RLY-101", io_type=IOType.DO, description="Emergency Interlock Relay")
+    hw_relay = resolve_hardware_assignment(sig_relay)
+    assert hw_relay.charm_model == "Relay Output Form C Isolated"
+    assert hw_relay.terminal_block_type == "Relay Form C"
+
+
+def test_resolve_hardware_solenoid_io_types():
+    for sov_type in ["SOV", "SOLENOID", "DO_SOLENOID"]:
+        hw = resolve_hardware_assignment(sov_type)
+        assert hw.charm_model == "Discrete Output 24 VDC High-Side"
+        assert hw.terminal_block_type == "Fused Injected-Power"
+        assert hw.terminal_block_part_no == "KL4002X1-BA1"
+
+
 def test_custom_catalog_override():
     custom_catalog = {
         "AI": {
@@ -134,13 +154,24 @@ def test_custom_catalog_override():
             "charm_part_no": "KL3001X1-CUSTOM",
             "terminal_block_type": "Fused Injected-Power",
             "terminal_block_part_no": "KL4002X1-CUSTOM",
-        }
+        },
+        "SPARE": {
+            "charm_description": "Custom Spare Module",
+            "charm_part_no": "KL-SPARE-01",
+            "terminal_block_type": "Fused Injected-Power",
+            "terminal_block_part_no": "KL-SPARE-TB",
+        },
     }
     hw = resolve_hardware_assignment(IOType.AI, catalog=custom_catalog)
     assert hw.charm_model == "Custom High-Accuracy AI"
     assert hw.charm_part_no == "KL3001X1-CUSTOM"
     assert hw.terminal_block_type == "Fused Injected-Power"
     assert hw.terminal_block_part_no == "KL4002X1-CUSTOM"
+
+    hw_sp = resolve_hardware_assignment(IOType.SPARE, catalog=custom_catalog)
+    assert hw_sp.charm_model == "Custom Spare Module"
+    assert hw_sp.charm_part_no == "KL-SPARE-01"
+    assert hw_sp.terminal_block_type == "Fused Injected-Power"
 
 
 def test_backward_compatible_resolve_hardware_for_io():

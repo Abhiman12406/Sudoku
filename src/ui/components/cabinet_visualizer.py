@@ -244,12 +244,14 @@ def render_din_rail_html(
                     )
                 elif slot_info["is_spare"]:
                     cable_color = color_map.get(slot_info["cable_id"], "#757575")
+                    spare_tb = slot_info.get("terminal_block_type") or "Standard"
                     html_parts.append(
-                        f"<div class='charm-card charm-card-spare' style='border-top: 3px solid {cable_color};'>"
+                        f"<div class='charm-card charm-card-spare' style='border-top: 3px solid {cable_color};' title='WIRED SPARE\nTB: {spare_tb}'>"
                         f"<div class='slot-pill'>SLOT {s_num:02d}</div>"
                         f"<div class='cable-badge' style='background: {cable_color};'>P{slot_info['pair_no']:02d}</div>"
                         f"<div class='tag-label' style='color:#B0BEC5;'>WIRED SPARE</div>"
                         f"<div class='type-badge'>{slot_info['cable_id'] or '-'}</div>"
+                        f"<div class='type-badge' style='color:#78909C;font-weight:600;'>{spare_tb}</div>"
                         f"</div>"
                     )
                 else:

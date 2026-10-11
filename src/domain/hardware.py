@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple, Union
 
-from src.domain.models import HardwareAssignment, IOType
+from src.domain.models import HardwareAssignment, IOType, Signal
 
 DEFAULT_CATALOG: Dict[str, Dict[str, Any]] = {
     "AI": {
@@ -61,35 +61,25 @@ RELAY_KEYWORDS = ("relay", "form c", "form_c", "form-c", "dry contact", "dry_con
 SOLENOID_KEYWORDS = ("solenoid", "sov", "valve", "xv", "shutdown", "blowdown")
 
 
+def _read_catalog_json(path: Path) -> Optional[Dict[str, Any]]:
+    """Safely read and extract catalog dictionary from JSON file."""
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            return data.get("hardware_catalog", data)
+    except Exception:
+        return None
+
+
 def load_hardware_catalog(catalog_path: Optional[Union[str, Path]] = None) -> Dict[str, Dict[str, Any]]:
     """Load hardware catalog from json file if available, otherwise return default."""
-    if catalog_path:
-        p = Path(catalog_path)
-        if p.exists():
-            try:
-                with open(p, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                    loaded = data.get("hardware_catalog", data)
-                    merged = dict(DEFAULT_CATALOG)
-                    merged.update(loaded)
-                    return merged
-            except Exception:
-                return dict(DEFAULT_CATALOG)
-
-    # Default file path check
-    repo_catalog = Path("config/deltav_hardware_catalog.json")
-    if repo_catalog.exists():
-        try:
-            with open(repo_catalog, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                loaded = data.get("hardware_catalog", data)
-                merged = dict(DEFAULT_CATALOG)
-                merged.update(loaded)
-                return merged
-        except Exception:
-            return dict(DEFAULT_CATALOG)
-
-    return dict(DEFAULT_CATALOG)
+    merged = dict(DEFAULT_CATALOG)
+    candidate = Path(catalog_path) if catalog_path else Path("config/deltav_hardware_catalog.json")
+    if candidate.exists():
+        loaded = _read_catalog_json(candidate)
+        if loaded:
+            merged.update(loaded)
+    return merged
 
 
 def _detect_effective_io_key(
@@ -103,41 +93,56 @@ def _detect_effective_io_key(
     if key in ("DO_RELAY", "RELAY"):
         return "DO_RELAY"
 
+    if key in ("SOV", "SOLENOID", "DO_SOLENOID"):
+        return "DO"
+
     if key == "DO":
         desc_lower = (description or "").lower()
         tag_lower = (tag or "").lower()
         full_text = f"{desc_lower} {tag_lower}"
 
-        # Check for relay / dry contact heuristics
+        # 1. Check for relay / dry contact heuristics -> Form C Relay
         if any(kw in full_text for kw in RELAY_KEYWORDS):
             return "DO_RELAY"
 
-        # By default DO maps to DO (Discrete Output 24 VDC High-Side + Fused Injected-Power)
+        # 2. Check for solenoid valve heuristics -> Fused Injected-Power
+        if any(kw in full_text for kw in SOLENOID_KEYWORDS):
+            return "DO"
+
+        # Default DO in DeltaV uses Fused Injected-Power for field actuation
         return "DO"
 
     return key
 
 
 def resolve_hardware_assignment(
-    io_type: Union[IOType, str],
+    signal_or_io_type: Union[Signal, IOType, str],
     description: Optional[str] = None,
     tag: Optional[str] = None,
     catalog: Optional[Dict[str, Any]] = None,
 ) -> HardwareAssignment:
     """Resolve full HardwareAssignment (CHARM model, part no, terminal block type, part no)
-    for a given signal type, taking into account specialized industrial hardware rules
+    for a given signal or IOType, taking into account specialized industrial hardware rules
     and engineer overrides.
     """
+    if isinstance(signal_or_io_type, Signal):
+        io_type = signal_or_io_type.io_type
+        description = signal_or_io_type.description
+        tag = signal_or_io_type.tag
+    else:
+        io_type = signal_or_io_type
+
     cat = catalog or load_hardware_catalog()
     raw_key = io_type.value if hasattr(io_type, "value") else str(io_type)
     effective_key = _detect_effective_io_key(raw_key, description=description, tag=tag)
 
     if effective_key == "SPARE":
+        spare_entry = cat.get("SPARE", DEFAULT_CATALOG["SPARE"])
         return HardwareAssignment(
-            charm_model="Wired Spare",
-            charm_part_no=None,
-            terminal_block_type="Standard",
-            terminal_block_part_no="KL4001X1-BA1",
+            charm_model=str(spare_entry.get("charm_model") or spare_entry.get("charm_description") or "Wired Spare"),
+            charm_part_no=spare_entry.get("charm_part_no"),
+            terminal_block_type=str(spare_entry.get("terminal_block_type", "Standard")),
+            terminal_block_part_no=spare_entry.get("terminal_block_part_no"),
         )
 
     # Lookup in catalog (custom or default)
@@ -159,9 +164,9 @@ def resolve_hardware_assignment(
 
 
 def resolve_hardware_for_io(
-    io_type: IOType,
+    signal_or_io_type: Union[Signal, IOType, str],
     catalog: Optional[Dict[str, Any]] = None,
 ) -> Tuple[Optional[str], str]:
     """Resolve (charm_part_no, terminal_block_type) for a given IOType (backwards-compatible)."""
-    hw = resolve_hardware_assignment(io_type, catalog=catalog)
+    hw = resolve_hardware_assignment(signal_or_io_type, catalog=catalog)
     return hw.charm_part_no, hw.terminal_block_type

@@ -53,8 +53,8 @@ def test_catalog_to_dataframe_and_roundtrip():
 
     df = catalog_to_dataframe(test_catalog)
     assert isinstance(df, pd.DataFrame)
-    assert len(df) == 7
-    assert set(df["Signal Type"]) == {"AI", "AO", "DI", "DO", "DO_RELAY", "TC", "RTD"}
+    assert len(df) == 8
+    assert set(df["Signal Type"]) == {"AI", "AO", "DI", "DO", "DO_RELAY", "TC", "RTD", "SPARE"}
 
     # Modify and convert back
     df.loc[df["Signal Type"] == "TC", "CHARM Part No"] = "KL3006X1-MOD"

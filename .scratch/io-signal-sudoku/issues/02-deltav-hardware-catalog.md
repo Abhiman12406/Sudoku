@@ -26,4 +26,4 @@
 - Built interactive Streamlit Hardware Catalog Editor in `src/ui/app.py` with `catalog_to_dataframe` and `dataframe_to_catalog`, allowing engineers to customize part numbers and terminal block types in real-time.
 - Extended Excel export columns in `src/export/excel_export.py` to write `CHARM Model`, `CHARM Part No`, `Terminal Block Type`, and `Terminal Block Part No`.
 - Displayed resolved CHARM Model and Terminal Block Type in the Streamlit allocation table, physical rack visualizer cards (`src/ui/components/cabinet_visualizer.py`), and dedicated Slot Details & Hardware Inspector.
-- Added comprehensive unit tests in `tests/test_hardware.py`, `tests/test_ui.py`, and updated `tests/test_pipeline.py`, `tests/test_solver.py`. 100% test pass rate across the full suite (62 passing tests).
+- Added comprehensive unit tests in `tests/test_hardware.py`, `tests/test_ui.py`, and updated `tests/test_pipeline.py`, `tests/test_solver.py`. 100% test pass rate across the full suite (64 passing tests).
