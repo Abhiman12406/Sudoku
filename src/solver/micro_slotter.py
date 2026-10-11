@@ -85,7 +85,7 @@ def _try_fast_slot_placement(
         pc = block.pair_count
         placed = False
 
-        if pc == 24:
+        if pc == 24 and charms_per_baseplate >= 12:
             for bp in range(1, baseplates_per_cioc):
                 if not any(grid[bp - 1]) and not any(grid[bp]):
                     grid[bp - 1] = [True] * charms_per_baseplate
@@ -94,7 +94,7 @@ def _try_fast_slot_placement(
                     placed = True
                     break
 
-        elif pc == 12:
+        elif pc == 12 and charms_per_baseplate >= 12:
             for bp in range(1, baseplates_per_cioc + 1):
                 if not any(grid[bp - 1]):
                     grid[bp - 1] = [True] * charms_per_baseplate
@@ -102,7 +102,7 @@ def _try_fast_slot_placement(
                     placed = True
                     break
 
-        elif pc == 6:
+        elif pc == 6 and charms_per_baseplate >= 12:
             for bp in range(1, baseplates_per_cioc + 1):
                 if not any(grid[bp - 1][0:6]):
                     for s in range(6):
@@ -119,7 +119,7 @@ def _try_fast_slot_placement(
 
         elif pc == 2:
             for bp in range(1, baseplates_per_cioc + 1):
-                for s in (1, 3, 5, 7, 9, 11):
+                for s in range(1, charms_per_baseplate, 2):
                     if not grid[bp - 1][s - 1] and not grid[bp - 1][s]:
                         grid[bp - 1][s - 1] = True
                         grid[bp - 1][s] = True

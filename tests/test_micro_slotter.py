@@ -114,3 +114,20 @@ def test_two_6_pair_cables_fit_on_single_baseplate():
     slots_b = [a.slot for a in allocations if a.cable_id == "CBL-B"]
     assert slots_a == list(range(min(slots_a), max(slots_a) + 1))
     assert slots_b == list(range(min(slots_b), max(slots_b) + 1))
+
+
+def test_micro_slotting_custom_baseplate_capacity():
+    # Verify that micro slotter handles charms_per_baseplate < 12 without IndexError
+    sig_2 = [Signal(tag=f"TAG-2P-{i}", io_type=IOType.AI, cable_id="CBL-2P", pair_no=i) for i in range(1, 3)]
+    block_2 = CableBlock(cable_id="CBL-2P", pair_count=2, signals=sig_2)
+
+    allocations = slot_cable_blocks_in_cioc(
+        [block_2],
+        cioc_id=1,
+        baseplates_per_cioc=4,
+        charms_per_baseplate=6,
+    )
+    assert len(allocations) == 2
+    assert all(a.baseplate == 1 for a in allocations)
+    assert [a.slot for a in allocations] == [1, 2]
+

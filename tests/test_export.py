@@ -372,6 +372,35 @@ def test_export_5_tab_package_without_template():
     assert "Template_Overlay" in wb.sheetnames
 
 
+def test_export_styling_preserved_large_batch():
+    # 2,100 allocations to verify styling is preserved on all rows
+    allocations = [
+        AllocatedSignal(
+            tag=f"10-FT-{i:04d}",
+            io_type=IOType.AI,
+            cioc=1 + (i // 96),
+            baseplate=1 + ((i % 96) // 12),
+            slot=1 + (i % 12),
+            segregation="A" if i % 2 == 0 else "B",
+            is_spare=(i % 10 == 0),
+        )
+        for i in range(2100)
+    ]
+    excel_bytes = export_allocation_to_excel(allocations)
+    wb = openpyxl.load_workbook(io.BytesIO(excel_bytes))
+    ws = wb["Allocation"]
+
+    # Check cell borders and alignment on row 50 and row 2050
+    for r in (50, 2050):
+        cell_tag = ws.cell(row=r, column=1)
+        assert cell_tag.border.left.style == "thin"
+        assert cell_tag.border.right.style == "thin"
+
+        cell_io = ws.cell(row=r, column=2)
+        assert cell_io.alignment.horizontal == "center"
+
+
+
 
 
 

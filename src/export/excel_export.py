@@ -110,13 +110,10 @@ def _populate_allocation_sheet(ws, allocations: Sequence[AllocatedSignal]) -> No
     seg_col_idx = next(col_idx for col_idx, (_, attr_name) in enumerate(ALLOCATION_COLUMNS, start=1) if attr_name == "segregation")
     status_col_idx = next(col_idx for col_idx, (_, attr_name) in enumerate(ALLOCATION_COLUMNS, start=1) if attr_name == "status")
 
-    fast_mode = len(allocations) > 2000
-
-    for row_idx, alloc in enumerate(allocations, start=2):
+    for alloc in allocations:
         row_vals = []
         is_spare = alloc.is_spare
-        seg = alloc.segregation
-        for col_idx, (_, attr_name) in enumerate(ALLOCATION_COLUMNS, start=1):
+        for _, attr_name in ALLOCATION_COLUMNS:
             if attr_name == "status":
                 val = "WIRED SPARE" if is_spare else "Active Loop"
             else:
@@ -126,29 +123,21 @@ def _populate_allocation_sheet(ws, allocations: Sequence[AllocatedSignal]) -> No
             row_vals.append(val)
         ws.append(row_vals)
 
-        if fast_mode:
-            # High-performance selective highlight styling
+    # Apply uniform template styling across all rows via iter_rows for optimal performance
+    for row in ws.iter_rows(min_row=2, max_row=ws.max_row, min_col=1, max_col=len(ALLOCATION_COLUMNS)):
+        is_spare = (row[status_col_idx - 1].value == "WIRED SPARE")
+        seg = row[seg_col_idx - 1].value
+        for col_idx, cell in enumerate(row, start=1):
+            cell.border = thin_border
+            cell.alignment = center_align if col_idx in center_cols else left_align
             if is_spare:
-                cell_status = ws.cell(row=row_idx, column=status_col_idx)
-                cell_status.font = spare_font
-                cell_status.fill = spare_fill
-            if seg in ("A", "B"):
-                cell_seg = ws.cell(row=row_idx, column=seg_col_idx)
-                cell_seg.font = train_a_font if seg == "A" else train_b_font
-        else:
-            # Full styling for standard batches
-            for col_idx in range(1, len(ALLOCATION_COLUMNS) + 1):
-                cell = ws.cell(row=row_idx, column=col_idx)
-                cell.border = thin_border
-                if is_spare:
-                    cell.font = spare_font
-                    cell.fill = spare_fill
-                elif col_idx == seg_col_idx:
-                    if seg == "A":
-                        cell.font = train_a_font
-                    elif seg == "B":
-                        cell.font = train_b_font
-                cell.alignment = center_align if col_idx in center_cols else left_align
+                cell.font = spare_font
+                cell.fill = spare_fill
+            elif col_idx == seg_col_idx:
+                if seg == "A":
+                    cell.font = train_a_font
+                elif seg == "B":
+                    cell.font = train_b_font
 
     _auto_fit_columns(ws, min_width=12)
     ws.freeze_panes = "A2"
@@ -453,9 +442,10 @@ def export_allocation_to_excel(
             segregation_policy=segregation_policy, ciocs_per_cabinet=ciocs_per_cabinet
         )
 
-        # Tab 5: Template_Overlay
+        # Tab 5: Template_Overlay (sample preview when no customer template is supplied)
         ws_overlay = wb.create_sheet(title="Template_Overlay")
-        _populate_allocation_sheet(ws_overlay, allocations)
+        sample_allocs = allocations[:250] if len(allocations) > 250 else allocations
+        _populate_allocation_sheet(ws_overlay, sample_allocs)
 
     # Tab: Revision_Impact (appended when revision_result is supplied)
     if revision_result is not None:
